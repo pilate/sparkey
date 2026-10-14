@@ -62,8 +62,22 @@ jobs:
 
   debian:
     runs-on: ubuntu-latest
-    container: debian:stable
-    name: debian package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debian-13
+            image: debian:13
+          - name: debian-12
+            image: debian:12
+            distribution: bookworm
+            version_suffix: "~deb12"
+          - name: ubuntu-24.04
+            image: ubuntu:24.04
+            distribution: noble
+            version_suffix: "~ubuntu24.04"
+    container: ${{ matrix.image }}
+    name: package (${{ matrix.name }})
     steps:
       - name: Install tools
         run: |
@@ -71,6 +85,15 @@ jobs:
           apt-get install -y -qq git ca-certificates dpkg-dev lintian
 
       - uses: actions/checkout@v4
+
+      # Give each distribution's packages a distinct version, so they can be
+      # published side by side. "~" sorts before the release, so the plain
+      # version replaces these after a distribution upgrade.
+      - name: Set distribution and version
+        if: matrix.distribution
+        run: >-
+          sed -i "1s/^\([^ ]*\) (\([^)]*\)) [^;]*;/\1 (\2${{ matrix.version_suffix }}) ${{ matrix.distribution }};/"
+          debian/changelog
 
       - name: Install build dependencies
         run: apt-get build-dep -y ./
@@ -81,10 +104,13 @@ jobs:
       - name: Lintian
         run: lintian --fail-on error,warning ../*.changes
 
+      # Ubuntu puts debug symbols in .ddeb files instead of -dbgsym .debs.
       - name: Collect packages
-        run: mkdir dist && mv ../*.deb ../*.changes ../*.buildinfo dist/
+        run: |
+          mkdir dist
+          find .. -maxdepth 1 -type f \( -name '*.deb' -o -name '*.ddeb' -o -name '*.changes' -o -name '*.buildinfo' \) -exec mv -t dist {} +
 
       - uses: actions/upload-artifact@v4
         with:
-          name: debian-packages
+          name: packages-${{ matrix.name }}
           path: dist/
