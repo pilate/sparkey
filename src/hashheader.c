@@ -76,37 +76,36 @@ typedef sparkey_returncode (*loader)(sparkey_hashheader *header, FILE *fp);
 
 static loader loaders[2] = { hashheader_version0, hashheader_version0 };
 
-sparkey_returncode sparkey_load_hashheader(sparkey_hashheader *header, const char *filename) {
-	FILE *fp = fopen(filename, "r");
-	if (fp == NULL) {
-		return sparkey_open_returncode(errno);
-	}
-
+static sparkey_returncode load_hashheader(sparkey_hashheader *header, FILE *fp) {
 	uint32_t tmp;
 	RETHROW(fread_little_endian32(fp, &tmp));
 	if (tmp != HASH_MAGIC_NUMBER) {
-		fclose(fp);
 		return SPARKEY_WRONG_HASH_MAGIC_NUMBER;
 	}
 	RETHROW(fread_little_endian32(fp, &header->major_version));
 	if (header->major_version != HASH_MAJOR_VERSION) {
-		fclose(fp);
 		return SPARKEY_WRONG_HASH_MAJOR_VERSION;
 	}
 	RETHROW(fread_little_endian32(fp, &header->minor_version));
 	if (header->minor_version > HASH_MINOR_VERSION) {
-		fclose(fp);
 		return SPARKEY_UNSUPPORTED_HASH_MINOR_VERSION;
 	}
 	int version = header->minor_version;
 	loader l = loaders[version];
 	if (l == NULL) {
-		fclose(fp);
 		return SPARKEY_INTERNAL_ERROR;
 	}
-	sparkey_returncode x = (*l)(header, fp);
+	return (*l)(header, fp);
+}
+
+sparkey_returncode sparkey_load_hashheader(sparkey_hashheader *header, const char *filename) {
+	FILE *fp = fopen(filename, "r");
+	if (fp == NULL) {
+		return sparkey_open_returncode(errno);
+	}
+	sparkey_returncode returncode = load_hashheader(header, fp);
 	fclose(fp);
-	return x;
+	return returncode;
 }
 
 sparkey_returncode write_hashheader(int fd, sparkey_hashheader *header) {

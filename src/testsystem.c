@@ -19,6 +19,7 @@
 #include <inttypes.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 
 #include "sparkey.h"
@@ -353,6 +354,36 @@ void verify_hash_rewrite(void) {
   assert_equals(0, rmdir("directory.spi"));
 }
 
+// Returns the file descriptor the next open() would get. If it changes after
+// some operation, that operation leaked a file descriptor.
+static int next_fd(void) {
+  int fd = open("/dev/null", O_RDONLY);
+  close(fd);
+  return fd;
+}
+
+// Creates a file that is too short to hold a sparkey header.
+static void write_short_file(const char *filename) {
+  FILE *fp = fopen(filename, "w");
+  fputs("ab", fp);
+  fclose(fp);
+}
+
+void verify_failed_header_loads_close_files(void) {
+  write_short_file("short.spl");
+  write_short_file("short.spi");
+  int fd = next_fd();
+  for (int i = 0; i < 10; i++) {
+    sparkey_logreader *logreader;
+    sparkey_hashreader *hashreader;
+    sparkey_logwriter *logwriter;
+    assert_equals(SPARKEY_UNEXPECTED_EOF, sparkey_logreader_open(&logreader, "short.spl"));
+    assert_equals(SPARKEY_UNEXPECTED_EOF, sparkey_logwriter_append(&logwriter, "short.spl"));
+    assert_equals(SPARKEY_UNEXPECTED_EOF, sparkey_hash_open(&hashreader, "short.spi", "short.spl"));
+  }
+  assert_equals(fd, next_fd());
+}
+
 int main(void) {
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 0, 0, 0);
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 1, 0, 0);
@@ -378,6 +409,7 @@ int main(void) {
   verify_files_closed();
   verify_truncated_hash_rebuild();
   verify_hash_rewrite();
+  verify_failed_header_loads_close_files();
 
   printf("Success!\n");
 }
