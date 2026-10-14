@@ -70,7 +70,7 @@ void write_little_endian64(uint8_t *buf, uint64_t value);
 sparkey_returncode fwrite_little_endian64(int fd, uint64_t value);
 uint32_t read_little_endian32(const uint8_t * array, uint64_t pos);
 uint64_t read_little_endian64(const uint8_t * array, uint64_t pos);
-sparkey_returncode correct_endian_platform();
+sparkey_returncode correct_endian_platform(void);
 
 sparkey_returncode fread_little_endian32(FILE *fp, uint32_t *res);
 sparkey_returncode fread_little_endian64(FILE *fp, uint64_t *res);

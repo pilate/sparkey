@@ -115,7 +115,7 @@ uint64_t read_little_endian64(const uint8_t * array, uint64_t pos) {
 #endif
 
 
-sparkey_returncode correct_endian_platform() {
+sparkey_returncode correct_endian_platform(void) {
 	return SPARKEY_SUCCESS;
 }
 

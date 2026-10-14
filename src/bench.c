@@ -109,7 +109,7 @@ static size_t total_file_size(const char** files) {
 
 #ifdef __APPLE__
 #include <mach/mach_time.h>
-static float wall() {
+static float wall(void) {
   static double multiplier = 0;
   if (multiplier <= 0) {
     mach_timebase_info_data_t info;
@@ -118,7 +118,7 @@ static float wall() {
   }
   return (float) (multiplier * mach_absolute_time());
 }
-static float cpu() {
+static float cpu(void) {
   return wall();
 }
 
@@ -130,13 +130,13 @@ static float cpu() {
 #else
 #define CLOCK_SUITABLE CLOCK_MONOTONIC
 #endif
-static float wall() {
+static float wall(void) {
   struct timespec tp;
   clock_gettime(CLOCK_SUITABLE, &tp);
   return tp.tv_sec + 1e-9 * tp.tv_nsec;
 }
 
-static float cpu() {
+static float cpu(void) {
   struct timespec tp;
   clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &tp);
   return tp.tv_sec + 1e-9 * tp.tv_nsec;
@@ -147,7 +147,7 @@ typedef struct {
   char *name;
   void (*create)(int n);
   void (*randomaccess)(int n, int lookups);
-  const char** (*files)();
+  const char** (*files)(void);
 } candidate;
 
 /* Sparkey stuff */
@@ -228,7 +228,7 @@ static void sparkey_create_zstd(int n) {
 
 static const char* sparkey_list[] = {"test.spi", "test.spl", NULL};
 
-static const char** sparkey_files() {
+static const char** sparkey_files(void) {
   return sparkey_list;
 }
 
@@ -276,7 +276,7 @@ void test(candidate *c, int n, int lookups) {
   printf("\n");
 }
 
-int main() {
+int main(void) {
   test(&sparkey_candidate_uncompressed, 1000, 1*1000*1000);
   test(&sparkey_candidate_uncompressed, 1000*1000, 1*1000*1000);
   test(&sparkey_candidate_uncompressed, 10*1000*1000, 1*1000*1000);

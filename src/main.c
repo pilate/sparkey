@@ -32,7 +32,7 @@
 #define COMP_MAX_BLOCKSIZE (1<<30)
 #define COMP_MIN_BLOCKSIZE (1<<4)
 
-static void usage() {
+static void usage(void) {
   fprintf(stderr, "Usage: sparkey <command> [<args>]\n");
   fprintf(stderr, "Commands:\n");
   fprintf(stderr, "  info      - Show information about sparkey files.\n");
@@ -46,12 +46,12 @@ static void usage() {
   fprintf(stderr, "  help      - Show this help text.\n");
 }
 
-static void usage_info() {
+static void usage_info(void) {
   fprintf(stderr, "Usage: sparkey info file1 [file2, ...]\n");
   fprintf(stderr, "  Show information about files. Files can be either index or log files.\n");
 }
 
-static void usage_get() {
+static void usage_get(void) {
   fprintf(stderr, "Usage: sparkey get <index file> <key>\n");
   fprintf(stderr, "  Get the value for a specific key.\n");
   fprintf(stderr, "  Returns 0 if found,\n");
@@ -59,13 +59,13 @@ static void usage_get() {
   fprintf(stderr, "          2 on not-found.\n");
 }
 
-static void usage_writehash() {
+static void usage_writehash(void) {
   fprintf(stderr, "Usage: sparkey writehash <file.spl>\n");
   fprintf(stderr, "  Write a new index file for a log file.\n");
   fprintf(stderr, "  Creates and possibly overwrites a new file with file ending .spi\n");
 }
 
-static void usage_createlog() {
+static void usage_createlog(void) {
   fprintf(stderr, "Usage: sparkey createlog [-c <none|snappy|zstd> | -b <n>] <file.spl>\n");
   fprintf(stderr, "  Create a new empty log file.\n");
   fprintf(stderr, "Options:\n");
@@ -76,7 +76,7 @@ static void usage_createlog() {
     COMP_MIN_BLOCKSIZE, COMP_MAX_BLOCKSIZE);
 }
 
-static void usage_appendlog() {
+static void usage_appendlog(void) {
   fprintf(stderr, "Usage: sparkey appendlog [-d <char>] <file.spl>\n");
   fprintf(stderr, "  Append data from STDIN to a log file with settings.\n");
   fprintf(stderr, "  data must be formatted as a sequence of\n");
@@ -85,7 +85,7 @@ static void usage_appendlog() {
   fprintf(stderr, "  -d <char>  Delimiter char to split input records on [default: TAB]\n");
 }
 
-static void usage_rewrite() {
+static void usage_rewrite(void) {
   fprintf(stderr, "Usage: sparkey rewrite [-c <none|snappy|zstd> | -b <n>] <input.spi> <output.spi>\n");
   fprintf(stderr, "  Iterate over all entries in <file.spi> and create a new index and log pair\n");
   fprintf(stderr, "Options:\n");

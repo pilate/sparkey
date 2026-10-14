@@ -26,7 +26,7 @@ void assert_equals(int64_t expected, int64_t actual) {
   }
 }
 
-int main() {
+int main(void) {
   uint8_t buf[20];
   for (int64_t i = 0; i < 60; i++) {
     for (int64_t j = -10; j < 10; j++) {

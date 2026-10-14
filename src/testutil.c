@@ -33,7 +33,7 @@ void assert_equals(const char *expected, const char *actual) {
   }
 }
 
-int main() {
+int main(void) {
   assert_equals(NULL, sparkey_create_log_filename(NULL));
   assert_equals(NULL, sparkey_create_log_filename(""));
   assert_equals(NULL, sparkey_create_log_filename("spi"));
