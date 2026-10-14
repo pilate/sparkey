@@ -33,13 +33,19 @@ void assert_equals(const char *expected, const char *actual) {
   }
 }
 
+static void assert_log_filename(const char *expected, const char *index_filename) {
+  char *actual = sparkey_create_log_filename(index_filename);
+  assert_equals(expected, actual);
+  free(actual);
+}
+
 int main(void) {
-  assert_equals(NULL, sparkey_create_log_filename(NULL));
-  assert_equals(NULL, sparkey_create_log_filename(""));
-  assert_equals(NULL, sparkey_create_log_filename("spi"));
-  assert_equals(".spl", sparkey_create_log_filename(".spi"));
-  assert_equals(NULL, sparkey_create_log_filename(".spx"));
-  assert_equals("foo.spl", sparkey_create_log_filename("foo.spi"));
+  assert_log_filename(NULL, NULL);
+  assert_log_filename(NULL, "");
+  assert_log_filename(NULL, "spi");
+  assert_log_filename(".spl", ".spi");
+  assert_log_filename(NULL, ".spx");
+  assert_log_filename("foo.spl", "foo.spi");
 
   printf("Success!\n");
 }

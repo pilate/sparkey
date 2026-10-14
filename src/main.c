@@ -161,7 +161,7 @@ int get(const char *hashfile, const char *logfile, const char *key) {
     uint8_t * res;
     uint64_t len;
     do {
-      assert(sparkey_logiter_valuechunk(iter, logreader, 1 << 31, &res, &len));
+      assert(sparkey_logiter_valuechunk(iter, logreader, UINT64_MAX, &res, &len));
       assert(write_full(STDOUT_FILENO, res, len));
     } while (len > 0);
   }
@@ -450,6 +450,7 @@ int main(int argc, char * const *argv) {
     char *output_log_filename = sparkey_create_log_filename(output_index_filename);
     if (output_log_filename == NULL) {
       fprintf(stderr, "output filename must end with .spi but was '%s'\n", output_index_filename);
+      free(input_log_filename);
       return 1;
     }
 
@@ -495,6 +496,8 @@ int main(int argc, char * const *argv) {
     sparkey_hash_close(&reader);
 
     writehash(output_index_filename, output_log_filename);
+    free(input_log_filename);
+    free(output_log_filename);
 
     return 0;
   } else if (strcmp(command, "help") == 0 || strcmp(command, "--help") == 0 || strcmp(command, "-h") == 0) {
