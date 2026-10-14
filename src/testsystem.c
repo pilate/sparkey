@@ -18,6 +18,8 @@
 #include <string.h>
 #include <inttypes.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include "sparkey.h"
 
@@ -276,10 +278,8 @@ static void write_entries(const char *log_filename, int from, int to) {
 }
 
 // Checks that key<i> maps to value<i> for i in [from, to).
-static void verify_entries(const char *hash_filename, const char *log_filename, int from, int to) {
-  sparkey_hashreader *reader;
+static void verify_reader_entries(sparkey_hashreader *reader, int from, int to) {
   sparkey_logiter *iter;
-  assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&reader, hash_filename, log_filename));
   sparkey_logreader *logreader = sparkey_hash_getreader(reader);
   assert_equals(SPARKEY_SUCCESS, sparkey_logiter_create(&iter, logreader));
   for (int i = from; i < to; i++) {
@@ -296,7 +296,27 @@ static void verify_entries(const char *hash_filename, const char *log_filename, 
     assert_str_equals(expected, (char *) value);
   }
   sparkey_logiter_close(&iter);
+}
+
+static void verify_entries(const char *hash_filename, const char *log_filename, int from, int to) {
+  sparkey_hashreader *reader;
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&reader, hash_filename, log_filename));
+  verify_reader_entries(reader, from, to);
   sparkey_hash_close(&reader);
+}
+
+// Counts the files in the current directory whose name starts with prefix.
+static int count_files(const char *prefix) {
+  int count = 0;
+  DIR *dir = opendir(".");
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    if (strncmp(entry->d_name, prefix, strlen(prefix)) == 0) {
+      count++;
+    }
+  }
+  closedir(dir);
+  return count;
 }
 
 void verify_truncated_hash_rebuild(void) {
@@ -308,6 +328,29 @@ void verify_truncated_hash_rebuild(void) {
   write_entries("truncated.spl", 100, 110);
   assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("truncated.spi", "truncated.spl", 0));
   verify_entries("truncated.spi", "truncated.spl", 0, 110);
+}
+
+void verify_hash_rewrite(void) {
+  // A hash file is replaced atomically: readers that already have it open keep
+  // seeing the old version, and no temporary files are left behind.
+  write_entries("rewrite.spl", 0, 100);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("rewrite.spi", "rewrite.spl", 0));
+  sparkey_hashreader *old_reader;
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&old_reader, "rewrite.spi", "rewrite.spl"));
+  write_entries("rewrite.spl", 100, 200);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("rewrite.spi", "rewrite.spl", 0));
+  verify_reader_entries(old_reader, 0, 100);
+  sparkey_hash_close(&old_reader);
+  verify_entries("rewrite.spi", "rewrite.spl", 0, 200);
+  assert_equals(0, count_files("rewrite.spi.tmp"));
+
+  // Failures are reported and clean up after themselves.
+  assert_equals(SPARKEY_FILE_NOT_FOUND, sparkey_hash_write("no-such-dir/rewrite.spi", "rewrite.spl", 0));
+  rmdir("directory.spi");
+  assert_equals(0, mkdir("directory.spi", 0755));
+  assert_equals(SPARKEY_FILE_IS_DIRECTORY, sparkey_hash_write("directory.spi", "rewrite.spl", 0));
+  assert_equals(0, count_files("directory.spi.tmp"));
+  assert_equals(0, rmdir("directory.spi"));
 }
 
 int main(void) {
@@ -334,6 +377,7 @@ int main(void) {
 
   verify_files_closed();
   verify_truncated_hash_rebuild();
+  verify_hash_rewrite();
 
   printf("Success!\n");
 }

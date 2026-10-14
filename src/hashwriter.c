@@ -367,6 +367,37 @@ free:
   return returncode;
 }
 
+// Creates a new, uniquely named file next to filename for writing.
+static sparkey_returncode create_temp_file(const char *filename, char **tmp_filename_ref, int *fd_ref) {
+  size_t size = strlen(filename) + 16;
+  char *tmp_filename = malloc(size);
+  if (tmp_filename == NULL) {
+    return SPARKEY_INTERNAL_ERROR;
+  }
+  for (int attempt = 0; attempt < 100; attempt++) {
+    uint32_t suffix;
+    sparkey_returncode returncode = rand32(&suffix);
+    if (returncode != SPARKEY_SUCCESS) {
+      free(tmp_filename);
+      return returncode;
+    }
+    snprintf(tmp_filename, size, "%s.tmp%08x", filename, suffix);
+    int fd = open(tmp_filename, O_WRONLY | O_CREAT | O_EXCL, 00644);
+    if (fd >= 0) {
+      *tmp_filename_ref = tmp_filename;
+      *fd_ref = fd;
+      return SPARKEY_SUCCESS;
+    }
+    if (errno != EEXIST) {
+      int e = errno;
+      free(tmp_filename);
+      return sparkey_create_returncode(e);
+    }
+  }
+  free(tmp_filename);
+  return SPARKEY_FILE_ALREADY_EXISTS;
+}
+
 sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log_filename, int hash_size) {
   sparkey_logheader log_header;
   sparkey_logreader *log;
@@ -504,25 +535,38 @@ normal_exit:
 
   calculate_max_displacement(&hash_header, hashtable);
 
-  // Try removing it first, to avoid overwriting existing files that readers may be using.
-  if (remove(hash_filename) < 0) {
-    int e = errno;
-    if (e != ENOENT) {
-      returncode = sparkey_remove_returncode(e);
-      goto free_hashtable;
-    }
-  }
-  int fd = creat(hash_filename, 00644);
+  // Write to a temporary file and rename it over the old one, so readers never see
+  // a partially written file and a failed write leaves the old file intact.
+  // Readers that already have the old file open keep using it.
+  char *tmp_filename = NULL;
+  int fd = -1;
+  TRY(create_temp_file(hash_filename, &tmp_filename, &fd), free_hashtable);
   hash_header.major_version = HASH_MAJOR_VERSION;
   hash_header.minor_version = HASH_MINOR_VERSION;
   hash_header.file_identifier = log_header.file_identifier;
   hash_header.data_end = log_header.data_end;
 
-  TRY(write_hashheader(fd, &hash_header), close_hash);
-  TRY(write_full(fd, hashtable, hashsize), close_hash);
+  TRY(write_hashheader(fd, &hash_header), remove_temp);
+  TRY(write_full(fd, hashtable, hashsize), remove_temp);
+  int close_result = close(fd);
+  fd = -1;
+  if (close_result < 0) {
+    returncode = errno == ENOSPC ? SPARKEY_OUT_OF_DISK : SPARKEY_INTERNAL_ERROR;
+    goto remove_temp;
+  }
+  if (rename(tmp_filename, hash_filename) < 0) {
+    returncode = sparkey_create_returncode(errno);
+    goto remove_temp;
+  }
+  free(tmp_filename);
+  goto free_hashtable;
 
-close_hash:
-  close(fd);
+remove_temp:
+  if (fd >= 0) {
+    close(fd);
+  }
+  unlink(tmp_filename);
+  free(tmp_filename);
 
 free_hashtable:
   free(hashtable);
