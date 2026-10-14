@@ -356,6 +356,7 @@ static sparkey_returncode fill_hash(uint8_t *hashtable, const char *hash_filenam
   uint8_t *buf = malloc(buffer_size);
   if (buf == NULL) {
     fprintf(stderr, "fill_hash():%d bug: could not malloc %"PRIu64" bytes\n", __LINE__, buffer_size);
+    close(fd);
     return SPARKEY_INTERNAL_ERROR;
   }
 

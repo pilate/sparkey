@@ -49,6 +49,16 @@ static sparkey_returncode assert_writer_open(sparkey_logwriter *log) {
   return SPARKEY_SUCCESS;
 }
 
+static void free_writer(sparkey_logwriter *log) {
+  if (log == NULL) {
+    return;
+  }
+  buf_close(&log->file_buf);
+  buf_close(&log->block_buf);
+  free(log->compressed);
+  free(log);
+}
+
 sparkey_returncode sparkey_logwriter_create(sparkey_logwriter **log_ref, const char *filename, sparkey_compression_type compression_type, int compression_block_size) {
   sparkey_returncode returncode;
   int fd = 0;
@@ -56,6 +66,9 @@ sparkey_returncode sparkey_logwriter_create(sparkey_logwriter **log_ref, const c
   if (l == NULL) {
     TRY(SPARKEY_INTERNAL_ERROR, error);
   }
+  l->compressed = NULL;
+  l->file_buf.start = NULL;
+  l->block_buf.start = NULL;
   if (sparkey_uses_compressor(compression_type)) {
     if (compression_block_size < 10) {
       TRY(SPARKEY_INVALID_COMPRESSION_BLOCK_SIZE, error);
@@ -67,7 +80,6 @@ sparkey_returncode sparkey_logwriter_create(sparkey_logwriter **log_ref, const c
     }
   } else {
     compression_block_size = 0;
-    l->compressed = NULL;
   }
 
   // Try removing it first, to avoid overwriting existing files that readers may be using.
@@ -114,7 +126,7 @@ sparkey_returncode sparkey_logwriter_create(sparkey_logwriter **log_ref, const c
   *log_ref = l;
   return SPARKEY_SUCCESS;
 error:
-  free(l);
+  free_writer(l);
   if (fd > 0) close(fd);
   return returncode;
 }
@@ -126,6 +138,9 @@ sparkey_returncode sparkey_logwriter_append(sparkey_logwriter **log_ref, const c
   if (log == NULL) {
     TRY(SPARKEY_INTERNAL_ERROR, error);
   }
+  log->compressed = NULL;
+  log->file_buf.start = NULL;
+  log->block_buf.start = NULL;
   TRY(sparkey_load_logheader(&log->header, filename), error);
 
   if (log->header.major_version != LOG_MAJOR_VERSION) {
@@ -142,9 +157,11 @@ sparkey_returncode sparkey_logwriter_append(sparkey_logwriter **log_ref, const c
     log->max_compressed_size = sparkey_compressors[log->header.compression_type].max_compressed_size(
       log->header.compression_block_size);
     log->compressed = malloc(log->max_compressed_size);
+    if (log->compressed == NULL) {
+      TRY(SPARKEY_INTERNAL_ERROR, error);
+    }
   } else {
     log->header.compression_block_size = 0;
-    log->compressed = NULL;
   }
 
   fd = open(filename, O_WRONLY, 00644);
@@ -165,7 +182,7 @@ sparkey_returncode sparkey_logwriter_append(sparkey_logwriter **log_ref, const c
   *log_ref = log;
   return SPARKEY_SUCCESS;
 error:
-  free(log);
+  free_writer(log);
   if (fd > 0) close(fd);
   return returncode;
 }
@@ -225,18 +242,12 @@ sparkey_returncode sparkey_logwriter_close(sparkey_logwriter **log) {
     return SPARKEY_SUCCESS;
   }
 
-  RETHROW(sparkey_logwriter_flush(l));
+  sparkey_returncode returncode = sparkey_logwriter_flush(l);
   close(l->fd);
-  buf_close(&l->file_buf);
-  buf_close(&l->block_buf);
-  if (l->compressed != NULL) {
-    free(l->compressed);
-  }
-
   l->open_status = 0;
-  free(l);
+  free_writer(l);
   *log = NULL;
-  return SPARKEY_SUCCESS;
+  return returncode;
 }
 
 static sparkey_returncode compressed_add(sparkey_logwriter *log, const uint8_t *data, ptrdiff_t len) {
