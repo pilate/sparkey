@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <limits.h>
 #include <errno.h>
 
 static void _errno_assert(const char *file, int line, int i) {
@@ -38,8 +39,8 @@ static void rm_rec(const char *dir) {
   if (tmpd != NULL) {
     struct dirent *d;
     while ((d = readdir(tmpd))) {
-      char subdir[100];
-      sprintf(subdir, "%s/%s", dir, d->d_name);
+      char subdir[PATH_MAX];
+      snprintf(subdir, sizeof(subdir), "%s/%s", dir, d->d_name);
       if(strcmp(d->d_name, ".") &&
          strcmp(d->d_name, "..")) {
         if (d->d_type == DT_DIR) {
@@ -78,8 +79,8 @@ static size_t file_size_rec(const char *dir) {
     if (tmpd != NULL) {
       struct dirent *d;
       while ((d = readdir(tmpd))) {
-        char subdir[100];
-        sprintf(subdir, "%s/%s", dir, d->d_name);
+        char subdir[PATH_MAX];
+        snprintf(subdir, sizeof(subdir), "%s/%s", dir, d->d_name);
         if(strcmp(d->d_name, ".") &&
            strcmp(d->d_name, "..")) {
           sum += file_size_rec(subdir);
