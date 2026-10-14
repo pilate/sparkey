@@ -89,6 +89,8 @@ if(BUILD_TESTING)
     add_test(NAME ${test} COMMAND ${test})
     set_tests_properties(${test} PROPERTIES TIMEOUT 120)
   endforeach()
+  add_test(NAME testcli COMMAND sh ${PROJECT_SOURCE_DIR}/src/testcli.sh $<TARGET_FILE:sparkey_cli>)
+  set_tests_properties(testcli PROPERTIES TIMEOUT 120)
 endif()
 
 find_package(Doxygen)

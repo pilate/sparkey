@@ -176,37 +176,49 @@ int writehash(const char *indexfile, const char *logfile) {
   return 0;
 }
 
-static size_t read_line(char **buffer, size_t *capacity, FILE *input) {
-  char *buf = *buffer;
+// Reads the next line from input into *buffer, without its trailing newline.
+// The last line of the input does not need a trailing newline.
+// Returns 1 if a line was read, 0 at the end of the input, and -1 on error.
+static int read_line(char **buffer, size_t *capacity, FILE *input) {
   size_t cap = *capacity, pos = 0;
 
   if (cap < MINIMUM_CAPACITY) {
     cap = MINIMUM_CAPACITY;
-  } else if (cap > MAXIMUM_CAPACITY) {
-    return pos;
   }
 
   while (1) {
-    buf = realloc(buf, cap);
+    if (cap > MAXIMUM_CAPACITY) {
+      fprintf(stderr, "Input line is longer than %d bytes, aborting early.\n", MAXIMUM_CAPACITY);
+      return -1;
+    }
+    char *buf = realloc(*buffer, cap);
     if (buf == NULL) {
-      return pos;
+      fprintf(stderr, "Out of memory reading input, aborting early.\n");
+      return -1;
     }
     *buffer = buf;
     *capacity = cap;
 
     if (fgets(buf + pos, cap - pos, input) == NULL) {
-      break;
+      if (ferror(input)) {
+        fprintf(stderr, "Cannot read input, aborting early.\n");
+        return -1;
+      }
+      return pos > 0 ? 1 : 0;
     }
 
     pos += strcspn(buf + pos, "\n");
     if (buf[pos] == '\n') {
-      break;
+      buf[pos] = '\0';
+      return 1;
+    }
+    if (pos < cap - 1) {
+      // fgets stopped before filling the buffer, so this was the last line.
+      return 1;
     }
 
     cap *= 2;
   }
-
-  return pos;
 }
 
 static int append(sparkey_logwriter *writer, char delimiter, FILE *input) {
@@ -219,10 +231,11 @@ static int append(sparkey_logwriter *writer, char delimiter, FILE *input) {
   delim[0] = delimiter;
   delim[1] = '\0';
 
-  for (size_t end = read_line(&line, &size, input); line[end] == '\n'; end = read_line(&line, &size, input)) {
+  int status;
+  while ((status = read_line(&line, &size, input)) > 0) {
     // Split on the first delimiter
     key = strtok(line, delim);
-    value = strtok(NULL, "\n");
+    value = strtok(NULL, "");
     if (value != NULL) {
       // Write to log
       TRY(sparkey_logwriter_put(writer, strlen(key), (uint8_t*)key, strlen(value), (uint8_t*)value), put_fail);
@@ -232,7 +245,7 @@ static int append(sparkey_logwriter *writer, char delimiter, FILE *input) {
   }
 
   free(line);
-  return 0;
+  return status < 0 ? 1 : 0;
 
 split_fail:
   free(line);
