@@ -400,6 +400,15 @@ void verify_failed_hash_open_closes_files(void) {
   assert_equals(fds, count_open_fds());
 }
 
+void verify_hash_write_up_to_date(void) {
+  // Writing a hash file that is already up to date does nothing. This used to
+  // leak the hash table, which the sanitizer CI job detects.
+  write_entries("uptodate.spl", 0, 100);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("uptodate.spi", "uptodate.spl", 0));
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("uptodate.spi", "uptodate.spl", 0));
+  verify_entries("uptodate.spi", "uptodate.spl", 0, 100);
+}
+
 int main(void) {
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 0, 0, 0);
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 1, 0, 0);
@@ -427,6 +436,7 @@ int main(void) {
   verify_hash_rewrite();
   verify_failed_header_loads_close_files();
   verify_failed_hash_open_closes_files();
+  verify_hash_write_up_to_date();
 
   printf("Success!\n");
 }

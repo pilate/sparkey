@@ -494,7 +494,7 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   if (copy_old) {
     if (old_header.data_end == log->header.data_end) {
       // Nothing needs to be done - just exit
-      goto close_iter;
+      goto free_hashtable;
     }
     TRY(fill_hash(hashtable, hash_filename, &old_header, &hash_header), free_hashtable);
     TRY(sparkey_logiter_seek(iter, log, start), free_hashtable);
