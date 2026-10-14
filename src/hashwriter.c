@@ -564,6 +564,12 @@ normal_exit:
 
   TRY(write_hashheader(fd, &hash_header), remove_temp);
   TRY(write_full(fd, hashtable, hashsize), remove_temp);
+  // Make sure the data is on disk before the rename, so a crash cannot leave
+  // the new file in place without its contents.
+  if (fsync(fd) < 0) {
+    returncode = errno == ENOSPC ? SPARKEY_OUT_OF_DISK : SPARKEY_INTERNAL_ERROR;
+    goto remove_temp;
+  }
   int close_result = close(fd);
   fd = -1;
   if (close_result < 0) {
