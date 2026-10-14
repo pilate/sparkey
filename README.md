@@ -12,8 +12,10 @@ Continuous integration with [GitHub Actions](https://github.com/pilate/sparkey/a
 Dependencies
 ------------
 
-* GNU build system (autoconf, automake, libtool)
+* [CMake](https://cmake.org/) 3.16 or newer
+* pkg-config
 * [Snappy](http://google.github.io/snappy/)
+* [Zstandard](https://facebook.github.io/zstd/)
 
 Optional
 
@@ -21,16 +23,22 @@ Optional
 
 Building
 --------
-    autoreconf --install
-    ./configure
-    make
-    make check
+    cmake -B build
+    cmake --build build
+    ctest --test-dir build
 
-API documentation can be generated with `doxygen`.
+API documentation can be generated with `cmake --build build --target doc` if Doxygen is installed.
+
+Build options (pass as `-D<option>=ON|OFF` when configuring):
+
+* `SPARKEY_BUILD_SHARED` - build the shared library (default `ON`)
+* `SPARKEY_BUILD_STATIC` - build the static library (default `ON`)
+* `SPARKEY_WERROR` - treat compiler warnings as errors (default `OFF`)
+* `BUILD_TESTING` - build the tests (default `ON`)
 
 Installing
 ----------
-    sudo make install && sudo ldconfig
+    sudo cmake --install build && sudo ldconfig
 
 Related projects
 ----------------

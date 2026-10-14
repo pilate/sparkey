@@ -18,19 +18,13 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq autoconf automake libtool libsnappy-dev libzstd-dev
+          sudo apt-get install -y -qq cmake pkg-config libsnappy-dev libzstd-dev
 
       - name: Configure
-        run: |
-          autoreconf --install
-          ./configure CC=${{ matrix.cc }}
+        run: cmake -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DSPARKEY_WERROR=ON
 
       - name: Build
-        run: make -j"$(nproc)"
+        run: cmake --build build --parallel
 
       - name: Test
-        run: make check
-
-      - name: Show test logs
-        if: failure()
-        run: cat src/test-suite.log src/*.log || true
+        run: ctest --test-dir build --output-on-failure
