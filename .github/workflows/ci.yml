@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    name: build (${{ matrix.cc }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq autoconf automake libtool libsnappy-dev libzstd-dev
+
+      - name: Configure
+        run: |
+          autoreconf --install
+          ./configure CC=${{ matrix.cc }}
+
+      - name: Build
+        run: make -j"$(nproc)"
+
+      - name: Test
+        run: make check
+
+      - name: Show test logs
+        if: failure()
+        run: cat src/test-suite.log src/*.log || true
