@@ -56,7 +56,7 @@ static void hex(char *s) {
   s[j] = 0;
 }
 
-int main() {
+int main(void) {
 printf("Running hash test... ");
 assert_murmurhash3_x86_32(0x5af6cd1b, "z", 0x5942ad3d);
 assert_murmurhash3_x86_32(0xa9489813, "2", 0x71905ea7);

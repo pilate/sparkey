@@ -32,7 +32,7 @@
 #define COMP_MAX_BLOCKSIZE (1<<30)
 #define COMP_MIN_BLOCKSIZE (1<<4)
 
-static void usage() {
+static void usage(void) {
   fprintf(stderr, "Usage: sparkey <command> [<args>]\n");
   fprintf(stderr, "Commands:\n");
   fprintf(stderr, "  info      - Show information about sparkey files.\n");
@@ -46,12 +46,12 @@ static void usage() {
   fprintf(stderr, "  help      - Show this help text.\n");
 }
 
-static void usage_info() {
+static void usage_info(void) {
   fprintf(stderr, "Usage: sparkey info file1 [file2, ...]\n");
   fprintf(stderr, "  Show information about files. Files can be either index or log files.\n");
 }
 
-static void usage_get() {
+static void usage_get(void) {
   fprintf(stderr, "Usage: sparkey get <index file> <key>\n");
   fprintf(stderr, "  Get the value for a specific key.\n");
   fprintf(stderr, "  Returns 0 if found,\n");
@@ -59,13 +59,13 @@ static void usage_get() {
   fprintf(stderr, "          2 on not-found.\n");
 }
 
-static void usage_writehash() {
+static void usage_writehash(void) {
   fprintf(stderr, "Usage: sparkey writehash <file.spl>\n");
   fprintf(stderr, "  Write a new index file for a log file.\n");
   fprintf(stderr, "  Creates and possibly overwrites a new file with file ending .spi\n");
 }
 
-static void usage_createlog() {
+static void usage_createlog(void) {
   fprintf(stderr, "Usage: sparkey createlog [-c <none|snappy|zstd> | -b <n>] <file.spl>\n");
   fprintf(stderr, "  Create a new empty log file.\n");
   fprintf(stderr, "Options:\n");
@@ -76,7 +76,7 @@ static void usage_createlog() {
     COMP_MIN_BLOCKSIZE, COMP_MAX_BLOCKSIZE);
 }
 
-static void usage_appendlog() {
+static void usage_appendlog(void) {
   fprintf(stderr, "Usage: sparkey appendlog [-d <char>] <file.spl>\n");
   fprintf(stderr, "  Append data from STDIN to a log file with settings.\n");
   fprintf(stderr, "  data must be formatted as a sequence of\n");
@@ -85,9 +85,10 @@ static void usage_appendlog() {
   fprintf(stderr, "  -d <char>  Delimiter char to split input records on [default: TAB]\n");
 }
 
-static void usage_rewrite() {
+static void usage_rewrite(void) {
   fprintf(stderr, "Usage: sparkey rewrite [-c <none|snappy|zstd> | -b <n>] <input.spi> <output.spi>\n");
-  fprintf(stderr, "  Iterate over all entries in <file.spi> and create a new index and log pair\n");
+  fprintf(stderr, "  Copy the live entries of <input.spi> into a new index and log pair,\n");
+  fprintf(stderr, "  dropping replaced and deleted entries.\n");
   fprintf(stderr, "Options:\n");
   fprintf(stderr, "  -c <none|snappy|zstd>  Compression algorithm [default: same as before]\n");
   fprintf(stderr, "  -b <n>                 Compression blocksize [default: same as before]\n");
@@ -161,7 +162,7 @@ int get(const char *hashfile, const char *logfile, const char *key) {
     uint8_t * res;
     uint64_t len;
     do {
-      assert(sparkey_logiter_valuechunk(iter, logreader, 1 << 31, &res, &len));
+      assert(sparkey_logiter_valuechunk(iter, logreader, UINT64_MAX, &res, &len));
       assert(write_full(STDOUT_FILENO, res, len));
     } while (len > 0);
   }
@@ -450,6 +451,7 @@ int main(int argc, char * const *argv) {
     char *output_log_filename = sparkey_create_log_filename(output_index_filename);
     if (output_log_filename == NULL) {
       fprintf(stderr, "output filename must end with .spi but was '%s'\n", output_index_filename);
+      free(input_log_filename);
       return 1;
     }
 
@@ -475,7 +477,7 @@ int main(int argc, char * const *argv) {
     uint8_t *valuebuf = malloc(sparkey_logreader_maxvaluelen(logreader));
 
     while (1) {
-      assert(sparkey_logiter_next(iter, logreader));
+      assert(sparkey_logiter_hashnext(iter, reader));
       if (sparkey_logiter_state(iter) != SPARKEY_ITER_ACTIVE) {
         break;
       }
@@ -495,6 +497,8 @@ int main(int argc, char * const *argv) {
     sparkey_hash_close(&reader);
 
     writehash(output_index_filename, output_log_filename);
+    free(input_log_filename);
+    free(output_log_filename);
 
     return 0;
   } else if (strcmp(command, "help") == 0 || strcmp(command, "--help") == 0 || strcmp(command, "-h") == 0) {

@@ -1,47 +1,69 @@
+Sparkey
+=======
+
+[![CI](https://github.com/pilate/sparkey/actions/workflows/ci.yml/badge.svg)](https://github.com/pilate/sparkey/actions/workflows/ci.yml)
+
 Sparkey is a simple constant key/value storage library. It is mostly suited for
 read heavy systems with infrequent large bulk inserts. It includes both a C
 library for working with sparkey index and log files (`libsparkey`), and a
-command line utility for getting info about and reading values from a sparkey
-index/log (`sparkey`).
+command line utility for creating, inspecting and reading sparkey index/log
+files (`sparkey`).
 
-### Travis
-Continuous integration with [travis](https://travis-ci.org/spotify/sparkey).
-
-[![Build Status](https://travis-ci.org/spotify/sparkey.svg?branch=master)](https://travis-ci.org/spotify/sparkey)
+This is a fork of [spotify/sparkey](https://github.com/spotify/sparkey).
+Version 2.0.0 modernizes the build (CMake, current GCC and Clang, GitHub Actions
+CI) and fixes several bugs. The file formats and the library ABI are unchanged,
+so existing sparkey files, and programs and bindings linked against
+`libsparkey.so.0`, keep working.
 
 Dependencies
 ------------
 
-* GNU build system (autoconf, automake, libtool)
-* [Snappy](http://google.github.io/snappy/)
+* A C99 compiler (GCC or Clang)
+* [CMake](https://cmake.org/) 3.16 or newer
+* pkg-config
+* [Snappy](https://google.github.io/snappy/)
+* [Zstandard](https://facebook.github.io/zstd/)
 
 Optional
 
-* [Doxygen](http://www.doxygen.org/)
+* [Doxygen](https://www.doxygen.nl/), for the API documentation
 
 Building
 --------
-    autoreconf --install
-    ./configure
-    make
-    make check
+    cmake -B build
+    cmake --build build
+    ctest --test-dir build
 
-API documentation can be generated with `doxygen`.
+API documentation can be generated with `cmake --build build --target doc` if Doxygen is installed.
+
+Build options (pass as `-D<option>=ON|OFF` when configuring):
+
+* `SPARKEY_BUILD_SHARED` - build the shared library (default `ON`)
+* `SPARKEY_BUILD_STATIC` - build the static library (default `ON`)
+* `SPARKEY_WERROR` - treat compiler warnings as errors (default `OFF`)
+* `BUILD_TESTING` - build the tests (default `ON`)
 
 Installing
 ----------
-    sudo make install && sudo ldconfig
+    sudo cmake --install build && sudo ldconfig
+
+### Debian packages
+
+To build `.deb` packages instead (`libsparkey0`, `libsparkey-dev`,
+`sparkey-bin` and `sparkey-doc`), run this from the source directory. The
+packages are written to the parent directory.
+
+    sudo apt-get build-dep ./
+    dpkg-buildpackage -us -uc -b
 
 Related projects
 ----------------
 
-* [spotify/sparkey-python: Official python bindings](https://github.com/spotify/sparkey-python)
-* [spotify/sparkey-java: Official java implementation](https://github.com/spotify/sparkey-java)
-* [emnl/gnista: Unofficial ruby bindings](https://github.com/emnl/gnista)
-* [adamtanner/sparkey: Unofficial ruby bindings](https://github.com/adamtanner/sparkey)
-* [stephenmathieson/node-sparkey: Unofficial node bindings](https://github.com/stephenmathieson/node-sparkey)
-* [tiegz/sparkey-go: Unofficial go bindings](https://github.com/tiegz/sparkey-go)
-* [dflemstr/sparkey-rs: Unofficial rust bindings](https://github.com/dflemstr/sparkey-rs)
+* [spotify/sparkey-python: Python bindings](https://github.com/spotify/sparkey-python)
+* [spotify/sparkey-java: Java implementation](https://github.com/spotify/sparkey-java)
+* [emnl/gnista: Ruby bindings](https://github.com/emnl/gnista)
+* [tiegz/sparkey-go: Go bindings](https://github.com/tiegz/sparkey-go)
+* [dflemstr/sparkey-rs: Rust bindings](https://github.com/dflemstr/sparkey-rs)
 
 Description
 ------------
@@ -88,6 +110,11 @@ Usage
 -----
 Sparkey is meant to be used as a library embedded in other software. Take a look at the API documentation which gives examples on how to use it.
 
+The `sparkey` command line tool can create log files, append tab-separated
+key/value pairs to them, build index files, look up keys and show information
+about existing files. See `man sparkey` for details, or run `sparkey help` for a
+summary.
+
 License
 -------
 Apache License, Version 2.0
@@ -132,7 +159,8 @@ Performance
 -----------
 A very simple benchmark program is included - see src/bench.c.
 The program is designed to be easily extended to measure other key value stores if anyone wants to.
-Running it on a production-like server (Intel(R) Xeon(R) CPU L5630 @ 2.13GHz) we get the following:
+The figures below are from the original project, running it on a production-like server
+(Intel(R) Xeon(R) CPU L5630 @ 2.13GHz) in 2013:
 
     Testing bulk insert of 1000 elements and 1000.000 random lookups
       Candidate: Sparkey
@@ -374,5 +402,5 @@ Now, if we search for key123 which maps to slot 3 (but doesn't exist!), we can s
 
 Compression
 -----------
-Sparkey also supports block level compression using google snappy. You select a block size which is then used to split the contents of the log into blocks. Each block is compressed independently with snappy. This can be useful if your bottleneck is file size and there is a lot of redundant data across adjacent entries. The downside of using this is that during lookups, at least one block needs to be decompressed. The larger blocks you choose, the better compression you may get, but you will also have higher lookup cost. This is a tradeoff that needs to be empirically evaluated for each use case.
+Sparkey also supports block level compression using [Snappy](https://google.github.io/snappy/) or [Zstandard](https://facebook.github.io/zstd/). You select a block size which is then used to split the contents of the log into blocks. Each block is compressed independently. Zstandard typically produces smaller files than Snappy, at the cost of slower writes and lookups. This can be useful if your bottleneck is file size and there is a lot of redundant data across adjacent entries. The downside of using this is that during lookups, at least one block needs to be decompressed. The larger blocks you choose, the better compression you may get, but you will also have higher lookup cost. This is a tradeoff that needs to be empirically evaluated for each use case.
 

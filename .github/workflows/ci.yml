@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    name: build (${{ matrix.cc }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake pkg-config libsnappy-dev libzstd-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DSPARKEY_WERROR=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  sanitize:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    name: sanitize (${{ matrix.cc }})
+    env:
+      SAN_FLAGS: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake pkg-config libsnappy-dev libzstd-dev
+
+      - name: Configure
+        run: >-
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          -DCMAKE_C_FLAGS="$SAN_FLAGS"
+          -DCMAKE_EXE_LINKER_FLAGS="$SAN_FLAGS"
+          -DCMAKE_SHARED_LINKER_FLAGS="$SAN_FLAGS"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  debian:
+    runs-on: ubuntu-latest
+    container: debian:stable
+    name: debian package
+    steps:
+      - name: Install tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates dpkg-dev lintian
+
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: apt-get build-dep -y ./
+
+      - name: Build packages
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Lintian
+        run: lintian --fail-on error,warning ../*.changes
+
+      - name: Collect packages
+        run: mkdir dist && mv ../*.deb ../*.changes ../*.buildinfo dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-packages
+          path: dist/

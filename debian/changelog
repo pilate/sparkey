@@ -1,3 +1,18 @@
+sparkey (2.0.0) unstable; urgency=medium
+
+  * Version 2.0.0. The library soname is unchanged (libsparkey.so.0).
+  * Build with CMake instead of autotools.
+  * Fix build failures with modern GCC and Clang.
+  * Fix a path buffer overflow in the bench tool.
+  * Fix sparkey rewrite turning deleted keys into empty values and keeping
+    replaced entries.
+  * Add a sparkey(1) man page.
+  * Update packaging to debhelper compat 13 and Standards-Version 4.7.2.
+  * Replace libsparkey-dbg with automatic -dbgsym packages.
+  * Install libraries to the multiarch directory.
+
+ -- Pilate <noptical@gmail.com>  Wed, 14 Oct 2026 11:17:10 -0700
+
 sparkey (0.2.0) unstable; urgency=low
 
   * Make sparkey appendlog only split each input line once on the delimiter

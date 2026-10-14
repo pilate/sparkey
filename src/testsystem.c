@@ -229,7 +229,7 @@ void verify(sparkey_compression_type compression, int blocksize, int hashsize, i
   sparkey_logiter_close(&myiter);
 }
 
-void verify_files_closed() {
+void verify_files_closed(void) {
   // Verify that SPARKEY_FILE_IDENTIFIER_MISMATCH is returned appropriately.
   sparkey_logwriter *writer;
   assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_create(&writer, "test1.spl",
@@ -256,7 +256,7 @@ void verify_files_closed() {
   assert_equals(SPARKEY_FILE_IDENTIFIER_MISMATCH, rc);
 }
 
-int main() {
+int main(void) {
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 0, 0, 0);
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 1, 0, 0);
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 100, 0, 0);

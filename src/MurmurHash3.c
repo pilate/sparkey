@@ -10,6 +10,9 @@
 #include "MurmurHash3.h"
 #include "endiantools.h"
 
+// The tail-handling switch statements fall through intentionally.
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+
 //-----------------------------------------------------------------------------
 // Platform-specific functions and macros
 
@@ -55,12 +58,12 @@ static inline uint64_t rotl64 ( uint64_t x, int8_t r )
 
 FORCE_INLINE uint32_t getblock32 ( const uint32_t * p, int i )
 {
-  return read_little_endian32((uint8_t *) p, 4*i);
+  return read_little_endian32((const uint8_t *) (p + i), 0);
 }
 
 FORCE_INLINE uint64_t getblock64 ( const uint64_t * p, int i )
 {
-  return read_little_endian64((uint8_t *) p, 8*i);
+  return read_little_endian64((const uint8_t *) (p + i), 0);
 }
 
 //-----------------------------------------------------------------------------

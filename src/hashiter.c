@@ -23,7 +23,7 @@
 uint64_t sparkey_iter_hash(sparkey_hashheader *hash_header, sparkey_logiter *iter, sparkey_logreader *log) {
   uint8_t *buf;
   uint64_t len;
-  sparkey_returncode returncode = sparkey_logiter_keychunk(iter, log, 1 << 31, &buf, &len);
+  sparkey_returncode returncode = sparkey_logiter_keychunk(iter, log, iter->keylen, &buf, &len);
   if (returncode != SPARKEY_SUCCESS) {
     return 0;
   }
@@ -33,7 +33,7 @@ uint64_t sparkey_iter_hash(sparkey_hashheader *hash_header, sparkey_logiter *ite
     uint8_t *keybuf = malloc(iter->keylen);
     memcpy(keybuf, buf, len);
     uint64_t len2;
-    returncode = sparkey_logiter_fill_key(iter, log, 1 << 31, keybuf + len, &len2);
+    returncode = sparkey_logiter_fill_key(iter, log, iter->keylen - len, keybuf + len, &len2);
     if (len + len2 != iter->keylen) {
       free(keybuf);
       return 0;

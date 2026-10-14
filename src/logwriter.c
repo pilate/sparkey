@@ -239,6 +239,10 @@ sparkey_returncode sparkey_logwriter_close(sparkey_logwriter **log) {
 static sparkey_returncode compressed_add(sparkey_logwriter *log, const uint8_t *data, ptrdiff_t len) {
   sparkey_buf *block_buf = &log->block_buf;
 
+  // data may be NULL when len is 0, which memcpy does not allow.
+  if (len == 0) {
+    return SPARKEY_SUCCESS;
+  }
   while (1) {
     ptrdiff_t remaining = buf_remaining(block_buf);
     if (remaining >= len) {

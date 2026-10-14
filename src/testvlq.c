@@ -26,11 +26,11 @@ void assert_equals(int64_t expected, int64_t actual) {
   }
 }
 
-int main() {
+int main(void) {
   uint8_t buf[20];
   for (int64_t i = 0; i < 60; i++) {
     for (int64_t j = -10; j < 10; j++) {
-      int64_t val = (1 << i) + j;
+      int64_t val = ((int64_t) 1 << i) + j;
       if (val >= 0) {
         uint64_t written = write_vlq(buf, val);
         uint64_t pos = 0;

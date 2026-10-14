@@ -58,6 +58,10 @@ sparkey_returncode buf_flushfile(sparkey_buf *buf, int fd) {
 }
 
 sparkey_returncode buf_add(sparkey_buf *buf, int fd, const uint8_t *data, ptrdiff_t len) {
+  // data may be NULL when len is 0, which memcpy does not allow.
+  if (len == 0) {
+    return SPARKEY_SUCCESS;
+  }
   while (1) {
     ptrdiff_t remaining = buf_remaining(buf);
     if (remaining >= len) {
