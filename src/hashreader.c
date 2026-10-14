@@ -40,6 +40,7 @@ sparkey_returncode sparkey_hash_open(sparkey_hashreader **reader_ref, const char
   }
 
   reader->open_status = 0;
+  reader->fd = -1;
 
   TRY(sparkey_load_hashheader(&reader->header, hash_filename), free_reader);
   TRY(sparkey_logreader_open_noalloc(&reader->log, log_filename), free_reader);
@@ -87,6 +88,10 @@ sparkey_returncode sparkey_hash_open(sparkey_hashreader **reader_ref, const char
   return SPARKEY_SUCCESS;
 
 close_reader:
+  // sparkey_hash_close only closes the hash file of a fully opened reader.
+  if (reader->fd >= 0) {
+    close(reader->fd);
+  }
   sparkey_hash_close(&reader);
   return returncode;
 

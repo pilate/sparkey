@@ -354,12 +354,16 @@ void verify_hash_rewrite(void) {
   assert_equals(0, rmdir("directory.spi"));
 }
 
-// Returns the file descriptor the next open() would get. If it changes after
-// some operation, that operation leaked a file descriptor.
-static int next_fd(void) {
-  int fd = open("/dev/null", O_RDONLY);
-  close(fd);
-  return fd;
+// Returns the number of open file descriptors. If it changes after some
+// operation, that operation leaked a file descriptor.
+static int count_open_fds(void) {
+  int count = 0;
+  for (int fd = 0; fd < 1024; fd++) {
+    if (fcntl(fd, F_GETFD) != -1) {
+      count++;
+    }
+  }
+  return count;
 }
 
 // Creates a file that is too short to hold a sparkey header.
@@ -372,7 +376,7 @@ static void write_short_file(const char *filename) {
 void verify_failed_header_loads_close_files(void) {
   write_short_file("short.spl");
   write_short_file("short.spi");
-  int fd = next_fd();
+  int fds = count_open_fds();
   for (int i = 0; i < 10; i++) {
     sparkey_logreader *logreader;
     sparkey_hashreader *hashreader;
@@ -381,7 +385,19 @@ void verify_failed_header_loads_close_files(void) {
     assert_equals(SPARKEY_UNEXPECTED_EOF, sparkey_logwriter_append(&logwriter, "short.spl"));
     assert_equals(SPARKEY_UNEXPECTED_EOF, sparkey_hash_open(&hashreader, "short.spi", "short.spl"));
   }
-  assert_equals(fd, next_fd());
+  assert_equals(fds, count_open_fds());
+}
+
+void verify_failed_hash_open_closes_files(void) {
+  write_entries("toosmall.spl", 0, 100);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("toosmall.spi", "toosmall.spl", 0));
+  assert_equals(0, truncate("toosmall.spi", 200));
+  int fds = count_open_fds();
+  for (int i = 0; i < 10; i++) {
+    sparkey_hashreader *reader;
+    assert_equals(SPARKEY_HASH_TOO_SMALL, sparkey_hash_open(&reader, "toosmall.spi", "toosmall.spl"));
+  }
+  assert_equals(fds, count_open_fds());
 }
 
 int main(void) {
@@ -410,6 +426,7 @@ int main(void) {
   verify_truncated_hash_rebuild();
   verify_hash_rewrite();
   verify_failed_header_loads_close_files();
+  verify_failed_hash_open_closes_files();
 
   printf("Success!\n");
 }
