@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(sparkey VERSION 0.1.0 LANGUAGES C)
+project(sparkey VERSION 2.0.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -52,8 +52,9 @@ set(SPARKEY_SOURCES
 set(SPARKEY_LIBRARIES)
 if(SPARKEY_BUILD_SHARED)
   add_library(sparkey SHARED ${SPARKEY_SOURCES})
-  # Matches the soname libtool produced, so existing binaries keep working.
-  set_target_properties(sparkey PROPERTIES VERSION 0.0.0 SOVERSION 0)
+  # The ABI is unchanged since the libtool build, so keep its soname
+  # (libsparkey.so.0) and existing binaries keep working.
+  set_target_properties(sparkey PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION 0)
   list(APPEND SPARKEY_LIBRARIES sparkey)
 endif()
 if(SPARKEY_BUILD_STATIC)

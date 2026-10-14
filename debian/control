@@ -1,7 +1,7 @@
 Source: sparkey
 Section: libs
 Priority: optional
-Maintainer: Kristofer Karlsson <krka@spotify.com>
+Maintainer: Pilate <noptical@gmail.com>
 Build-Depends: debhelper-compat (= 13), cmake (>= 3.16), pkgconf, doxygen, libsnappy-dev, libzstd-dev
 Standards-Version: 4.7.2
 Rules-Requires-Root: no

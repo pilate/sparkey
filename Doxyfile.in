@@ -2,6 +2,7 @@
 # defaults are listed; run "doxygen -g" to see the full set of options.
 
 PROJECT_NAME           = Sparkey
+PROJECT_NUMBER         = @PROJECT_VERSION@
 PROJECT_BRIEF          = "A simple key value store"
 OUTPUT_DIRECTORY       = doxy
 ABBREVIATE_BRIEF       =
