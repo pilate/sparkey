@@ -2,11 +2,12 @@ debian/files
 debian/*.log
 debian/*.debhelper
 debian/*.substvars
-debian/libsparkey-dbg/
 debian/libsparkey0/
 debian/sparkey-bin/
 debian/sparkey-doc/
 debian/libsparkey-dev/
 debian/tmp/
+debian/.debhelper/
+debian/debhelper-build-stamp
 
 /build*/

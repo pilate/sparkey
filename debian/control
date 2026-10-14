@@ -1,13 +1,14 @@
 Source: sparkey
 Section: libs
-Priority: extra
+Priority: optional
 Maintainer: Kristofer Karlsson <krka@spotify.com>
-Build-Depends: debhelper (>= 7.0.50), cmake (>= 3.16), pkg-config, doxygen, zip, libsnappy-dev, libzstd-dev
-Standards-Version: 3.9.1
+Build-Depends: debhelper-compat (= 13), cmake (>= 3.16), pkgconf, doxygen, libsnappy-dev, libzstd-dev
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
 
 Package: libsparkey0
-Section: libs
 Architecture: any
+Multi-Arch: same
 Depends: ${misc:Depends}, ${shlibs:Depends}
 Description: Sparkey library
  Sparkey is a simple constant key/value storage library. It is best suited for
@@ -18,6 +19,7 @@ Description: Sparkey library
 Package: libsparkey-dev
 Section: libdevel
 Architecture: any
+Multi-Arch: same
 Depends: libsparkey0 (= ${binary:Version}), ${misc:Depends}
 Description: Sparkey headers and libraries for development
  Sparkey is a simple constant key/value storage library. It is best suited for
@@ -26,18 +28,9 @@ Description: Sparkey headers and libraries for development
  This is the development package containing headers and static libraries for
  sparkey.
 
-Package: libsparkey-dbg
-Section: debug
-Architecture: any
-Depends: libsparkey0 (= ${binary:Version}), ${misc:Depends}
-Description: Sparkey library: debug symbols
- Sparkey is a simple constant key/value storage library. It is best suited for
- read heavy systems with infrequent big bulk inserts.
- .
- This package contains debug symbols for the sparkey library.
-
 Package: sparkey-doc
 Architecture: all
+Multi-Arch: foreign
 Section: doc
 Depends: ${misc:Depends}
 Description: Sparkey API documentation
