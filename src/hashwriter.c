@@ -551,6 +551,12 @@ normal_exit:
   char *tmp_filename = NULL;
   int fd = -1;
   TRY(create_temp_file(hash_filename, &tmp_filename, &fd), free_hashtable);
+  // Keep the permissions of the file being replaced.
+  struct stat old_stat;
+  if (stat(hash_filename, &old_stat) == 0 && fchmod(fd, old_stat.st_mode & 07777) < 0) {
+    returncode = sparkey_create_returncode(errno);
+    goto remove_temp;
+  }
   hash_header.major_version = HASH_MAJOR_VERSION;
   hash_header.minor_version = HASH_MINOR_VERSION;
   hash_header.file_identifier = log_header->file_identifier;

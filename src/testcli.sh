@@ -45,9 +45,16 @@ expect_value cli.spi edge "$edge"
 "$sparkey" get cli.spi e
 [ $? -eq 2 ] || fail "get of a missing key should exit with 2"
 
+# Rewriting the hash file keeps its permissions.
+chmod 600 cli.spi
+printf 'f\t6\n' | "$sparkey" appendlog cli.spl || fail "appendlog failed"
+"$sparkey" writehash cli.spl || fail "writehash failed"
+[ "$(ls -l cli.spi | cut -c1-10)" = "-rw-------" ] || fail "writehash changed the permissions of cli.spi"
+expect_value cli.spi f 6
+
 # rewrite keeps only the live entries.
 "$sparkey" rewrite cli.spi cli-rewrite.spi || fail "rewrite failed"
-"$sparkey" info cli-rewrite.spl | grep -q "Puts: 7," || fail "rewrite did not drop the replaced entry"
+"$sparkey" info cli-rewrite.spl | grep -q "Puts: 8," || fail "rewrite did not drop the replaced entry"
 expect_value cli-rewrite.spi a 1b
 
 echo "Success!"
