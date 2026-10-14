@@ -319,6 +319,20 @@ static sparkey_returncode hash_copy(uint8_t *hashtable, uint8_t *buf, size_t buf
   return SPARKEY_SUCCESS;
 }
 
+static uint64_t hash_capacity_for(uint64_t num_entries) {
+  return 1 | (uint64_t) (num_entries * 1.3);
+}
+
+static uint32_t choose_hash_size(int requested_hash_size, uint32_t old_hash_size, uint64_t hash_capacity) {
+  if (requested_hash_size != 0) {
+    return requested_hash_size;
+  }
+  if (old_hash_size == 8 || hash_capacity >= (1 << 23)) {
+    return 8;
+  }
+  return 4;
+}
+
 // Returns 1 if the hash file is at least as large as its header says it is.
 static int hash_file_complete(const char *hash_filename, sparkey_hashheader *header) {
   struct stat s;
@@ -414,10 +428,13 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   sparkey_hashheader hash_header;
   sparkey_hashheader old_header;
 
-  double cap;
+  if (hash_size != 0 && hash_size != 4 && hash_size != 8) {
+    returncode = SPARKEY_HASH_SIZE_INVALID;
+    goto close_iter;
+  }
+
   uint64_t start;
-  uint32_t hash_seed;
-  int copy_old;
+  int copy_old = 0;
   uint32_t old_hash_size = 0;
   returncode = sparkey_load_hashheader(&old_header, hash_filename);
   if (returncode == SPARKEY_SUCCESS &&
@@ -425,26 +442,29 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
       old_header.major_version == HASH_MAJOR_VERSION &&
       old_header.minor_version == HASH_MINOR_VERSION &&
       hash_file_complete(hash_filename, &old_header)) {
-    // Prepare to copy stuff from old header
-    cap = ((log_header.num_puts - old_header.num_puts) + old_header.num_entries) * 1.3;
-    start = old_header.data_end;
-    hash_seed = old_header.hash_seed;
-    hash_header.garbage_size = old_header.garbage_size;
-
-    copy_old = 1;
     old_hash_size = old_header.hash_size;
+    // Only the puts added since the old hash file can add entries to its table.
+    hash_header.hash_capacity = hash_capacity_for((log_header.num_puts - old_header.num_puts) + old_header.num_entries);
+    hash_header.hash_size = choose_hash_size(hash_size, old_hash_size, hash_header.hash_capacity);
+    // The old table can only be copied if the hash size stays the same.
+    copy_old = hash_header.hash_size == old_hash_size;
+  }
+  returncode = SPARKEY_SUCCESS;
+
+  if (copy_old) {
+    start = old_header.data_end;
+    hash_header.hash_seed = old_header.hash_seed;
+    hash_header.garbage_size = old_header.garbage_size;
   } else {
-    cap = log_header.num_puts * 1.3;
+    // Replaying the whole log can have every put in the table at once, before
+    // later deletes remove them, so size the table for all of them.
+    hash_header.hash_capacity = hash_capacity_for(log_header.num_puts);
+    hash_header.hash_size = choose_hash_size(hash_size, old_hash_size, hash_header.hash_capacity);
     start = log_header.header_size;
-    TRY(rand32(&hash_seed), close_iter);
+    TRY(rand32(&hash_header.hash_seed), close_iter);
     hash_header.garbage_size = 0;
-    copy_old = 0;
-    returncode = SPARKEY_SUCCESS;
   }
 
-  hash_header.hash_capacity = 1 | (uint64_t) cap;
-
-  hash_header.hash_seed = hash_seed;
   hash_header.max_key_len = log_header.max_key_len;
   hash_header.max_value_len = log_header.max_value_len;
   hash_header.data_end = log_header.data_end;
@@ -457,22 +477,6 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
     hash_header.address_size = 4;
   } else {
     hash_header.address_size = 8;
-  }
-  if (old_hash_size == 8 || hash_header.hash_capacity >= (1 << 23)) {
-    hash_header.hash_size = 8;
-  } else {
-    hash_header.hash_size = 4;
-  }
-  if (hash_size != 0) {
-    if (hash_size == 4 || hash_size == 8) {
-      hash_header.hash_size = hash_size;
-    } else {
-      returncode = SPARKEY_HASH_SIZE_INVALID;
-      goto close_iter;
-    }
-  }
-  if (hash_header.hash_size != old_hash_size) {
-    copy_old = 0;
   }
   hash_header.hash_algorithm = sparkey_get_hash_algorithm(hash_header.hash_size);
 
