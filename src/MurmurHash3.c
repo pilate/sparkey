@@ -10,6 +10,9 @@
 #include "MurmurHash3.h"
 #include "endiantools.h"
 
+// The tail-handling switch statements fall through intentionally.
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+
 //-----------------------------------------------------------------------------
 // Platform-specific functions and macros
 
