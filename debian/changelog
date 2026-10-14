@@ -4,6 +4,8 @@ sparkey (2.0.0) unstable; urgency=medium
   * Build with CMake instead of autotools.
   * Fix build failures with modern GCC and Clang.
   * Fix a path buffer overflow in the bench tool.
+  * Fix sparkey rewrite turning deleted keys into empty values and keeping
+    replaced entries.
   * Update packaging to debhelper compat 13 and Standards-Version 4.7.2.
   * Replace libsparkey-dbg with automatic -dbgsym packages.
   * Install libraries to the multiarch directory.

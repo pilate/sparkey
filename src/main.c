@@ -87,7 +87,8 @@ static void usage_appendlog(void) {
 
 static void usage_rewrite(void) {
   fprintf(stderr, "Usage: sparkey rewrite [-c <none|snappy|zstd> | -b <n>] <input.spi> <output.spi>\n");
-  fprintf(stderr, "  Iterate over all entries in <file.spi> and create a new index and log pair\n");
+  fprintf(stderr, "  Copy the live entries of <input.spi> into a new index and log pair,\n");
+  fprintf(stderr, "  dropping replaced and deleted entries.\n");
   fprintf(stderr, "Options:\n");
   fprintf(stderr, "  -c <none|snappy|zstd>  Compression algorithm [default: same as before]\n");
   fprintf(stderr, "  -b <n>                 Compression blocksize [default: same as before]\n");
@@ -476,7 +477,7 @@ int main(int argc, char * const *argv) {
     uint8_t *valuebuf = malloc(sparkey_logreader_maxvaluelen(logreader));
 
     while (1) {
-      assert(sparkey_logiter_next(iter, logreader));
+      assert(sparkey_logiter_hashnext(iter, reader));
       if (sparkey_logiter_state(iter) != SPARKEY_ITER_ACTIVE) {
         break;
       }
