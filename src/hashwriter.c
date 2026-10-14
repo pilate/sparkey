@@ -413,14 +413,15 @@ static sparkey_returncode create_temp_file(const char *filename, char **tmp_file
 }
 
 sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log_filename, int hash_size) {
-  sparkey_logheader log_header;
   sparkey_logreader *log;
   sparkey_logiter *iter = NULL;
   sparkey_logiter *ra_iter = NULL;
 
-  RETHROW(sparkey_load_logheader(&log_header, log_filename));
-
   RETHROW(sparkey_logreader_open(&log, log_filename));
+  // Use the header the reader mapped the log with. Another process may append
+  // to the log at any time, and the table must be sized for the entries that
+  // are actually indexed.
+  sparkey_logheader *log_header = &log->header;
   sparkey_returncode returncode = SPARKEY_SUCCESS;
   TRY(sparkey_logiter_create(&iter, log), close_reader);
   TRY(sparkey_logiter_create(&ra_iter, log), close_iter);
@@ -438,13 +439,13 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   uint32_t old_hash_size = 0;
   returncode = sparkey_load_hashheader(&old_header, hash_filename);
   if (returncode == SPARKEY_SUCCESS &&
-      old_header.file_identifier == log_header.file_identifier &&
+      old_header.file_identifier == log_header->file_identifier &&
       old_header.major_version == HASH_MAJOR_VERSION &&
       old_header.minor_version == HASH_MINOR_VERSION &&
       hash_file_complete(hash_filename, &old_header)) {
     old_hash_size = old_header.hash_size;
     // Only the puts added since the old hash file can add entries to its table.
-    hash_header.hash_capacity = hash_capacity_for((log_header.num_puts - old_header.num_puts) + old_header.num_entries);
+    hash_header.hash_capacity = hash_capacity_for((log_header->num_puts - old_header.num_puts) + old_header.num_entries);
     hash_header.hash_size = choose_hash_size(hash_size, old_hash_size, hash_header.hash_capacity);
     // The old table can only be copied if the hash size stays the same.
     copy_old = hash_header.hash_size == old_hash_size;
@@ -458,19 +459,19 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   } else {
     // Replaying the whole log can have every put in the table at once, before
     // later deletes remove them, so size the table for all of them.
-    hash_header.hash_capacity = hash_capacity_for(log_header.num_puts);
+    hash_header.hash_capacity = hash_capacity_for(log_header->num_puts);
     hash_header.hash_size = choose_hash_size(hash_size, old_hash_size, hash_header.hash_capacity);
-    start = log_header.header_size;
+    start = log_header->header_size;
     TRY(rand32(&hash_header.hash_seed), close_iter);
     hash_header.garbage_size = 0;
   }
 
-  hash_header.max_key_len = log_header.max_key_len;
-  hash_header.max_value_len = log_header.max_value_len;
-  hash_header.data_end = log_header.data_end;
-  hash_header.num_puts = log_header.num_puts;
+  hash_header.max_key_len = log_header->max_key_len;
+  hash_header.max_value_len = log_header->max_value_len;
+  hash_header.data_end = log_header->data_end;
+  hash_header.num_puts = log_header->num_puts;
 
-  hash_header.entry_block_bits = int_log2(log_header.max_entries_per_block);
+  hash_header.entry_block_bits = int_log2(log_header->max_entries_per_block);
   hash_header.entry_block_bitmask = (1 << hash_header.entry_block_bits) - 1;
 
   if (hash_header.data_end < (1ULL << (32 - hash_header.entry_block_bits))) {
@@ -496,7 +497,7 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   hash_header.hash_collisions = 0;
 
   if (copy_old) {
-    if (old_header.data_end == log->header.data_end) {
+    if (old_header.data_end == log_header->data_end) {
       // Nothing needs to be done - just exit
       goto free_hashtable;
     }
@@ -547,8 +548,8 @@ normal_exit:
   TRY(create_temp_file(hash_filename, &tmp_filename, &fd), free_hashtable);
   hash_header.major_version = HASH_MAJOR_VERSION;
   hash_header.minor_version = HASH_MINOR_VERSION;
-  hash_header.file_identifier = log_header.file_identifier;
-  hash_header.data_end = log_header.data_end;
+  hash_header.file_identifier = log_header->file_identifier;
+  hash_header.data_end = log_header->data_end;
 
   TRY(write_hashheader(fd, &hash_header), remove_temp);
   TRY(write_full(fd, hashtable, hashsize), remove_temp);
