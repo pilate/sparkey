@@ -1,0 +1,152 @@
+.TH SPARKEY 1 2026-10-14 "sparkey @PROJECT_VERSION@" "User Commands"
+.SH NAME
+sparkey \- create, inspect and read sparkey key/value files
+.SH SYNOPSIS
+.B sparkey info
+.I file
+.RI [ file ...]
+.br
+.B sparkey get
+.I index.spi key
+.br
+.B sparkey writehash
+.I log.spl
+.br
+.B sparkey createlog
+.RB [ \-c
+.IR compression ]
+.RB [ \-b
+.IR blocksize ]
+.I log.spl
+.br
+.B sparkey appendlog
+.RB [ \-d
+.IR delimiter ]
+.I log.spl
+.br
+.B sparkey rewrite
+.RB [ \-c
+.IR compression ]
+.RB [ \-b
+.IR blocksize ]
+.I input.spi output.spi
+.br
+.B sparkey help
+.SH DESCRIPTION
+Sparkey is a simple constant key/value store, suited to read-heavy workloads
+with infrequent bulk writes.
+Data is stored in two files: an append-only log file
+.RI ( .spl )
+holding the key/value entries, and an immutable index file
+.RI ( .spi )
+holding a hash table that points into the log.
+.PP
+.B sparkey
+is a command line tool for creating, inspecting and reading these files.
+Commands that take an index file find the matching log file by replacing the
+.I .spi
+extension with
+.IR .spl ,
+and vice versa.
+.SH COMMANDS
+.TP
+.B info \fIfile\fR ...
+Print the header information of each file, which may be either a log or an
+index file.
+.TP
+.B get \fIindex.spi key\fR
+Look up
+.I key
+and write its value to standard output, exactly as stored and without a
+trailing newline.
+.TP
+.B writehash \fIlog.spl\fR
+Build an index file for
+.IR log.spl ,
+replacing any existing index file of the same name.
+Run this after appending to a log so that lookups see the new entries.
+.TP
+.B createlog \fR[\fIoptions\fR] \fIlog.spl\fR
+Create a new, empty log file.
+.TP
+.B appendlog \fR[\fB\-d \fIdelimiter\fR] \fIlog.spl\fR
+Read records from standard input and append them to an existing log file.
+Each record is a line of the form
+.IR key " " delimiter " " value ,
+terminated by a newline.
+The line is split on the first delimiter, so the value may itself contain the
+delimiter.
+Empty keys and empty values are not supported, and a final line without a
+trailing newline is ignored.
+If a later record uses the same key as an earlier one, the later value
+replaces it.
+.TP
+.B rewrite \fR[\fIoptions\fR] \fIinput.spi output.spi\fR
+Copy all live entries of an index/log pair into a new pair, dropping replaced
+and deleted entries.
+This can also change the compression settings.
+The input and output must be different files.
+.TP
+.B help
+Show a summary of the commands.
+.SH OPTIONS
+.TP
+.BI \-c " compression"
+Compression algorithm for the log file:
+.BR none ,
+.B snappy
+or
+.BR zstd .
+For
+.BR createlog ,
+the default is
+.BR none .
+For
+.BR rewrite ,
+the default is to keep the input's setting.
+.TP
+.BI \-b " blocksize"
+Compression block size in bytes, between 16 and 1073741824.
+For
+.BR createlog ,
+the default is 4096.
+For
+.BR rewrite ,
+the default is to keep the input's setting, so this option must be given when
+compressing a log that was previously uncompressed.
+Larger blocks usually compress better but make lookups slower, since each
+lookup decompresses a whole block.
+.TP
+.BI \-d " delimiter"
+The single character separating keys from values in
+.B appendlog
+input.
+The default is a tab.
+.SH EXIT STATUS
+.B get
+exits with 0 if the key was found, 1 on error and 2 if the key was not found.
+The other commands exit with 0 on success and 1 on error.
+.SH EXAMPLES
+Create a log, add two entries, build the index and look up a key:
+.PP
+.nf
+.RS
+$ sparkey createlog \-c zstd data.spl
+$ printf 'alice\et1\enbob\et2\en' | sparkey appendlog data.spl
+$ sparkey writehash data.spl
+$ sparkey get data.spi alice
+1
+.RE
+.fi
+.PP
+Remove replaced entries and switch to Snappy compression:
+.PP
+.nf
+.RS
+$ sparkey rewrite \-c snappy \-b 4096 data.spi compact.spi
+.RE
+.fi
+.SH SEE ALSO
+The sparkey README and API documentation:
+.br
+\%https://github.com/pilate/sparkey

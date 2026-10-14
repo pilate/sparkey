@@ -6,6 +6,7 @@ sparkey (2.0.0) unstable; urgency=medium
   * Fix a path buffer overflow in the bench tool.
   * Fix sparkey rewrite turning deleted keys into empty values and keeping
     replaced entries.
+  * Add a sparkey(1) man page.
   * Update packaging to debhelper compat 13 and Standards-Version 4.7.2.
   * Replace libsparkey-dbg with automatic -dbgsym packages.
   * Install libraries to the multiarch directory.
