@@ -87,6 +87,7 @@ if(BUILD_TESTING)
     target_link_libraries(${test} PRIVATE ${SPARKEY_LINK_LIBRARY})
     sparkey_set_warnings(${test})
     add_test(NAME ${test} COMMAND ${test})
+    set_tests_properties(${test} PROPERTIES TIMEOUT 120)
   endforeach()
 endif()
 

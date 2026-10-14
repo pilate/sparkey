@@ -287,9 +287,16 @@ static sparkey_returncode read_fully(int fd, uint8_t *buf, size_t count) {
   while (count > 0) {
     ssize_t actual_read = read(fd, buf, count);
     if (actual_read < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
       fprintf(stderr, "read_fully():%d bug: actual_read = %"PRIu64", errno = %d\n", __LINE__, (uint64_t)actual_read, errno);
       return SPARKEY_INTERNAL_ERROR;
     }
+    if (actual_read == 0) {
+      return SPARKEY_UNEXPECTED_EOF;
+    }
+    buf += actual_read;
     count -= actual_read;
   }
   return SPARKEY_SUCCESS;
@@ -310,6 +317,16 @@ static sparkey_returncode hash_copy(uint8_t *hashtable, uint8_t *buf, size_t buf
     }
   }
   return SPARKEY_SUCCESS;
+}
+
+// Returns 1 if the hash file is at least as large as its header says it is.
+static int hash_file_complete(const char *hash_filename, sparkey_hashheader *header) {
+  struct stat s;
+  if (stat(hash_filename, &s) != 0) {
+    return 0;
+  }
+  uint64_t expected = header->header_size + header->hash_capacity * (header->address_size + header->hash_size);
+  return (uint64_t) s.st_size >= expected;
 }
 
 static sparkey_returncode fill_hash(uint8_t *hashtable, const char *hash_filename, sparkey_hashheader *old_header, sparkey_hashheader *new_header) {
@@ -375,7 +392,8 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   if (returncode == SPARKEY_SUCCESS &&
       old_header.file_identifier == log_header.file_identifier &&
       old_header.major_version == HASH_MAJOR_VERSION &&
-      old_header.minor_version == HASH_MINOR_VERSION) {
+      old_header.minor_version == HASH_MINOR_VERSION &&
+      hash_file_complete(hash_filename, &old_header)) {
     // Prepare to copy stuff from old header
     cap = ((log_header.num_puts - old_header.num_puts) + old_header.num_entries) * 1.3;
     start = old_header.data_end;

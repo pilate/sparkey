@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <unistd.h>
 
 #include "sparkey.h"
 
@@ -256,6 +257,59 @@ void verify_files_closed(void) {
   assert_equals(SPARKEY_FILE_IDENTIFIER_MISMATCH, rc);
 }
 
+// Writes key<i> -> value<i> for i in [from, to), creating the log if from is 0.
+static void write_entries(const char *log_filename, int from, int to) {
+  sparkey_logwriter *writer;
+  if (from == 0) {
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_create(&writer, log_filename, SPARKEY_COMPRESSION_NONE, 0));
+  } else {
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_append(&writer, log_filename));
+  }
+  for (int i = from; i < to; i++) {
+    char key[32];
+    char value[32];
+    snprintf(key, sizeof(key), "key%d", i);
+    snprintf(value, sizeof(value), "value%d", i);
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_put(writer, strlen(key), (uint8_t *) key, strlen(value), (uint8_t *) value));
+  }
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(&writer));
+}
+
+// Checks that key<i> maps to value<i> for i in [from, to).
+static void verify_entries(const char *hash_filename, const char *log_filename, int from, int to) {
+  sparkey_hashreader *reader;
+  sparkey_logiter *iter;
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&reader, hash_filename, log_filename));
+  sparkey_logreader *logreader = sparkey_hash_getreader(reader);
+  assert_equals(SPARKEY_SUCCESS, sparkey_logiter_create(&iter, logreader));
+  for (int i = from; i < to; i++) {
+    char key[32];
+    char expected[32];
+    uint8_t value[32];
+    uint64_t len;
+    snprintf(key, sizeof(key), "key%d", i);
+    snprintf(expected, sizeof(expected), "value%d", i);
+    assert_equals(SPARKEY_SUCCESS, sparkey_hash_get(reader, (uint8_t *) key, strlen(key), iter));
+    assert_equals(SPARKEY_ITER_ACTIVE, sparkey_logiter_state(iter));
+    assert_equals(SPARKEY_SUCCESS, sparkey_logiter_fill_value(iter, logreader, sizeof(value) - 1, value, &len));
+    value[len] = '\0';
+    assert_str_equals(expected, (char *) value);
+  }
+  sparkey_logiter_close(&iter);
+  sparkey_hash_close(&reader);
+}
+
+void verify_truncated_hash_rebuild(void) {
+  // Updating a hash file that is smaller than its header says used to hang.
+  // It should be rebuilt from scratch instead.
+  write_entries("truncated.spl", 0, 100);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("truncated.spi", "truncated.spl", 0));
+  assert_equals(0, truncate("truncated.spi", 200));
+  write_entries("truncated.spl", 100, 110);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("truncated.spi", "truncated.spl", 0));
+  verify_entries("truncated.spi", "truncated.spl", 0, 110);
+}
+
 int main(void) {
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 0, 0, 0);
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 1, 0, 0);
@@ -279,6 +333,7 @@ int main(void) {
   }
 
   verify_files_closed();
+  verify_truncated_hash_rebuild();
 
   printf("Success!\n");
 }
