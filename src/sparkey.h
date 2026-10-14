@@ -349,6 +349,7 @@ sparkey_returncode sparkey_logwriter_flush(sparkey_logwriter *log);
  * Flushes the log, then closes the file and marks the log as closed.
  * The log will be closed after this, the sparkey_logwriter struct
  * referenced will be freed and *log will be set to NULL.
+ * Closing a writer that is already closed (*log is NULL) does nothing.
  * @param log a double reference to an open log writer.
  * @return SPARKEY_SUCCESS if all goes well.
  */

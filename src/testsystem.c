@@ -409,6 +409,15 @@ void verify_hash_write_up_to_date(void) {
   verify_entries("uptodate.spi", "uptodate.spl", 0, 100);
 }
 
+void verify_logwriter_double_close(void) {
+  // Closing a writer twice used to dereference NULL.
+  sparkey_logwriter *writer;
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_create(&writer, "doubleclose.spl", SPARKEY_COMPRESSION_NONE, 0));
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(&writer));
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(&writer));
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(NULL));
+}
+
 int main(void) {
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 0, 0, 0);
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 1, 0, 0);
@@ -437,6 +446,7 @@ int main(void) {
   verify_failed_header_loads_close_files();
   verify_failed_hash_open_closes_files();
   verify_hash_write_up_to_date();
+  verify_logwriter_double_close();
 
   printf("Success!\n");
 }

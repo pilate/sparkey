@@ -217,6 +217,9 @@ sparkey_returncode sparkey_logwriter_flush(sparkey_logwriter *log) {
 }
 
 sparkey_returncode sparkey_logwriter_close(sparkey_logwriter **log) {
+  if (log == NULL || *log == NULL) {
+    return SPARKEY_SUCCESS;
+  }
   sparkey_logwriter *l = *log;
   if (l->open_status != MAGIC_VALUE_LOGWRITER) {
     return SPARKEY_SUCCESS;
