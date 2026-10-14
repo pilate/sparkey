@@ -486,8 +486,13 @@ int main(int argc, char * const *argv) {
     sparkey_logiter *iter;
     assert(sparkey_logiter_create(&iter, logreader));
 
-    uint8_t *keybuf = malloc(sparkey_logreader_maxkeylen(logreader));
-    uint8_t *valuebuf = malloc(sparkey_logreader_maxvaluelen(logreader));
+    // Allocate at least one byte, since malloc(0) may return NULL.
+    uint8_t *keybuf = malloc(sparkey_logreader_maxkeylen(logreader) + 1);
+    uint8_t *valuebuf = malloc(sparkey_logreader_maxvaluelen(logreader) + 1);
+    if (keybuf == NULL || valuebuf == NULL) {
+      fprintf(stderr, "Out of memory allocating key and value buffers.\n");
+      return 1;
+    }
 
     while (1) {
       assert(sparkey_logiter_hashnext(iter, reader));

@@ -171,7 +171,9 @@ sparkey_returncode sparkey_logwriter_append(sparkey_logwriter **log_ref, const c
   }
   log->fd = fd;
 
-  lseek(fd, log->header.data_end, SEEK_SET);
+  if (lseek(fd, log->header.data_end, SEEK_SET) < 0) {
+    TRY(SPARKEY_INTERNAL_ERROR, error);
+  }
 
   TRY(buf_init(&log->file_buf, 1024*1024), error);
   TRY(buf_init(&log->block_buf, log->header.compression_block_size), error);
@@ -223,10 +225,17 @@ sparkey_returncode sparkey_logwriter_flush(sparkey_logwriter *log) {
     RETHROW(buf_flushfile(&log->file_buf, log->fd));
   }
   off_t pos = lseek(log->fd, 0, SEEK_CUR);
+  if (pos < 0) {
+    return SPARKEY_INTERNAL_ERROR;
+  }
   log->header.data_end = pos;
-  lseek(log->fd, 0, SEEK_SET);
+  if (lseek(log->fd, 0, SEEK_SET) < 0) {
+    return SPARKEY_INTERNAL_ERROR;
+  }
   RETHROW(write_logheader(log->fd, &log->header));
-  lseek(log->fd, pos, SEEK_SET);
+  if (lseek(log->fd, pos, SEEK_SET) < 0) {
+    return SPARKEY_INTERNAL_ERROR;
+  }
 
   /* Can't build fsync support on lenny */
   /* fsync(log->fd); */

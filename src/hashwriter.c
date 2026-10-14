@@ -349,7 +349,10 @@ static sparkey_returncode fill_hash(uint8_t *hashtable, const char *hash_filenam
     return sparkey_open_returncode(errno);
   }
 
-  lseek(fd, old_header->header_size, SEEK_SET);
+  if (lseek(fd, old_header->header_size, SEEK_SET) < 0) {
+    close(fd);
+    return SPARKEY_INTERNAL_ERROR;
+  }
 
   int slot_size = old_header->address_size + old_header->hash_size;
   uint64_t buffer_size = slot_size * 1024;
@@ -524,7 +527,8 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
     uint64_t iter_block_start = iter->block_position;
     uint64_t iter_entry_count = iter->entry_count;
 
-    uint64_t key_hash = sparkey_iter_hash(&hash_header, iter, log);
+    uint64_t key_hash;
+    TRY(sparkey_iter_hash(&hash_header, iter, log, &key_hash), free_hashtable);
     uint64_t wanted_slot = key_hash % hash_header.hash_capacity;
 
     switch (iter->type) {

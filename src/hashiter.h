@@ -20,7 +20,7 @@
 
 #include "hashheader.h"
 
-uint64_t sparkey_iter_hash(sparkey_hashheader *hash_header, sparkey_logiter *iter, sparkey_logreader *log);
+sparkey_returncode sparkey_iter_hash(sparkey_hashheader *hash_header, sparkey_logiter *iter, sparkey_logreader *log, uint64_t *hash);
 
 #endif
 
