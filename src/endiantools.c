@@ -94,7 +94,9 @@ sparkey_returncode fwrite_little_endian64(int fd, uint64_t value) {
   return write_full(fd, buf, 8);
 }
 
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ || defined(__LITTLE_ENDIAN) || defined(__LITTLE_ENDIAN__)
+// glibc defines both __LITTLE_ENDIAN and __BIG_ENDIAN on every platform, so
+// they cannot be used to detect the byte order.
+#if defined(__BYTE_ORDER__) ? __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ : defined(__LITTLE_ENDIAN__)
 uint32_t read_little_endian32(const uint8_t * array, uint64_t pos) {
   uint32_t value;
   memcpy(&value, array + pos, sizeof(value));
@@ -106,7 +108,7 @@ uint64_t read_little_endian64(const uint8_t * array, uint64_t pos) {
   memcpy(&value, array + pos, sizeof(value));
   return value;
 }
-#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__ || defined(__BIG_ENDIAN) || defined(__BIG_ENDIAN__)
+#elif defined(__BYTE_ORDER__) ? __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__ : defined(__BIG_ENDIAN__)
 uint32_t read_little_endian32(const uint8_t * array, uint64_t pos) {
   uint32_t value;
   memcpy(&value, array + pos, sizeof(value));
@@ -119,7 +121,7 @@ uint64_t read_little_endian64(const uint8_t * array, uint64_t pos) {
   return bswap_64(value);
 }
 #else
-#error "none of __LITTLE_ENDIAN, __LITTLE_ENDIAN__, __BIG_ENDIAN, __BIG_ENDIAN__ is defined"
+#error "cannot determine the byte order: neither __BYTE_ORDER__ nor __LITTLE_ENDIAN__/__BIG_ENDIAN__ is defined"
 #endif
 
 
