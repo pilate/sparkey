@@ -76,8 +76,9 @@ Each record is a line of the form
 terminated by a newline.
 The line is split on the first delimiter, so the value may itself contain the
 delimiter.
-Empty keys and empty values are not supported, and a final line without a
-trailing newline is ignored.
+The last line does not need a trailing newline.
+Empty keys and empty values are not supported, and neither are lines longer
+than 256 MiB.
 If a later record uses the same key as an earlier one, the later value
 replaces it.
 .TP

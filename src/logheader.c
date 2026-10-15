@@ -70,37 +70,36 @@ typedef sparkey_returncode (*loader)(sparkey_logheader *header, FILE *fp);
 
 static loader loaders[1] = { logheader_version0 };
 
-sparkey_returncode sparkey_load_logheader(sparkey_logheader *header, const char *filename) {
-  FILE *fp = fopen(filename, "r");
-  if (fp == NULL) {
-    return sparkey_open_returncode(errno);
-  }
-
+static sparkey_returncode load_logheader(sparkey_logheader *header, FILE *fp) {
   uint32_t tmp;
   RETHROW(fread_little_endian32(fp, &tmp));
   if (tmp != LOG_MAGIC_NUMBER) {
-    fclose(fp);
     return SPARKEY_WRONG_LOG_MAGIC_NUMBER;
   }
   RETHROW(fread_little_endian32(fp, &header->major_version));
   if (header->major_version != LOG_MAJOR_VERSION) {
-    fclose(fp);
     return SPARKEY_WRONG_LOG_MAJOR_VERSION;
   }
   RETHROW(fread_little_endian32(fp, &header->minor_version));
   if (header->minor_version > LOG_MINOR_VERSION) {
-    fclose(fp);
     return SPARKEY_UNSUPPORTED_LOG_MINOR_VERSION;
   }
   int version = header->minor_version;
   loader l = loaders[version];
   if (l == NULL) {
-    fclose(fp);
     return SPARKEY_INTERNAL_ERROR;
   }
-  sparkey_returncode x = (*l)(header, fp);
+  return (*l)(header, fp);
+}
+
+sparkey_returncode sparkey_load_logheader(sparkey_logheader *header, const char *filename) {
+  FILE *fp = fopen(filename, "r");
+  if (fp == NULL) {
+    return sparkey_open_returncode(errno);
+  }
+  sparkey_returncode returncode = load_logheader(header, fp);
   fclose(fp);
-  return x;
+  return returncode;
 }
 
 sparkey_returncode write_logheader(int fd, sparkey_logheader *header) {

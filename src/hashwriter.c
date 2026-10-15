@@ -287,9 +287,16 @@ static sparkey_returncode read_fully(int fd, uint8_t *buf, size_t count) {
   while (count > 0) {
     ssize_t actual_read = read(fd, buf, count);
     if (actual_read < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
       fprintf(stderr, "read_fully():%d bug: actual_read = %"PRIu64", errno = %d\n", __LINE__, (uint64_t)actual_read, errno);
       return SPARKEY_INTERNAL_ERROR;
     }
+    if (actual_read == 0) {
+      return SPARKEY_UNEXPECTED_EOF;
+    }
+    buf += actual_read;
     count -= actual_read;
   }
   return SPARKEY_SUCCESS;
@@ -312,19 +319,47 @@ static sparkey_returncode hash_copy(uint8_t *hashtable, uint8_t *buf, size_t buf
   return SPARKEY_SUCCESS;
 }
 
+static uint64_t hash_capacity_for(uint64_t num_entries) {
+  return 1 | (uint64_t) (num_entries * 1.3);
+}
+
+static uint32_t choose_hash_size(int requested_hash_size, uint32_t old_hash_size, uint64_t hash_capacity) {
+  if (requested_hash_size != 0) {
+    return requested_hash_size;
+  }
+  if (old_hash_size == 8 || hash_capacity >= (1 << 23)) {
+    return 8;
+  }
+  return 4;
+}
+
+// Returns 1 if the hash file is at least as large as its header says it is.
+static int hash_file_complete(const char *hash_filename, sparkey_hashheader *header) {
+  struct stat s;
+  if (stat(hash_filename, &s) != 0) {
+    return 0;
+  }
+  uint64_t expected = header->header_size + header->hash_capacity * (header->address_size + header->hash_size);
+  return (uint64_t) s.st_size >= expected;
+}
+
 static sparkey_returncode fill_hash(uint8_t *hashtable, const char *hash_filename, sparkey_hashheader *old_header, sparkey_hashheader *new_header) {
   int fd = open(hash_filename, O_RDONLY);
   if (fd < 0) {
     return sparkey_open_returncode(errno);
   }
 
-  lseek(fd, old_header->header_size, SEEK_SET);
+  if (lseek(fd, old_header->header_size, SEEK_SET) < 0) {
+    close(fd);
+    return SPARKEY_INTERNAL_ERROR;
+  }
 
   int slot_size = old_header->address_size + old_header->hash_size;
   uint64_t buffer_size = slot_size * 1024;
   uint8_t *buf = malloc(buffer_size);
   if (buf == NULL) {
     fprintf(stderr, "fill_hash():%d bug: could not malloc %"PRIu64" bytes\n", __LINE__, buffer_size);
+    close(fd);
     return SPARKEY_INTERNAL_ERROR;
   }
 
@@ -350,15 +385,47 @@ free:
   return returncode;
 }
 
+// Creates a new, uniquely named file next to filename for writing.
+static sparkey_returncode create_temp_file(const char *filename, char **tmp_filename_ref, int *fd_ref) {
+  size_t size = strlen(filename) + 16;
+  char *tmp_filename = malloc(size);
+  if (tmp_filename == NULL) {
+    return SPARKEY_INTERNAL_ERROR;
+  }
+  for (int attempt = 0; attempt < 100; attempt++) {
+    uint32_t suffix;
+    sparkey_returncode returncode = rand32(&suffix);
+    if (returncode != SPARKEY_SUCCESS) {
+      free(tmp_filename);
+      return returncode;
+    }
+    snprintf(tmp_filename, size, "%s.tmp%08x", filename, suffix);
+    int fd = open(tmp_filename, O_WRONLY | O_CREAT | O_EXCL, 00644);
+    if (fd >= 0) {
+      *tmp_filename_ref = tmp_filename;
+      *fd_ref = fd;
+      return SPARKEY_SUCCESS;
+    }
+    if (errno != EEXIST) {
+      int e = errno;
+      free(tmp_filename);
+      return sparkey_create_returncode(e);
+    }
+  }
+  free(tmp_filename);
+  return SPARKEY_FILE_ALREADY_EXISTS;
+}
+
 sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log_filename, int hash_size) {
-  sparkey_logheader log_header;
   sparkey_logreader *log;
   sparkey_logiter *iter = NULL;
   sparkey_logiter *ra_iter = NULL;
 
-  RETHROW(sparkey_load_logheader(&log_header, log_filename));
-
   RETHROW(sparkey_logreader_open(&log, log_filename));
+  // Use the header the reader mapped the log with. Another process may append
+  // to the log at any time, and the table must be sized for the entries that
+  // are actually indexed.
+  sparkey_logheader *log_header = &log->header;
   sparkey_returncode returncode = SPARKEY_SUCCESS;
   TRY(sparkey_logiter_create(&iter, log), close_reader);
   TRY(sparkey_logiter_create(&ra_iter, log), close_iter);
@@ -366,64 +433,55 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   sparkey_hashheader hash_header;
   sparkey_hashheader old_header;
 
-  double cap;
+  if (hash_size != 0 && hash_size != 4 && hash_size != 8) {
+    returncode = SPARKEY_HASH_SIZE_INVALID;
+    goto close_iter;
+  }
+
   uint64_t start;
-  uint32_t hash_seed;
-  int copy_old;
+  int copy_old = 0;
   uint32_t old_hash_size = 0;
   returncode = sparkey_load_hashheader(&old_header, hash_filename);
   if (returncode == SPARKEY_SUCCESS &&
-      old_header.file_identifier == log_header.file_identifier &&
+      old_header.file_identifier == log_header->file_identifier &&
       old_header.major_version == HASH_MAJOR_VERSION &&
-      old_header.minor_version == HASH_MINOR_VERSION) {
-    // Prepare to copy stuff from old header
-    cap = ((log_header.num_puts - old_header.num_puts) + old_header.num_entries) * 1.3;
-    start = old_header.data_end;
-    hash_seed = old_header.hash_seed;
-    hash_header.garbage_size = old_header.garbage_size;
-
-    copy_old = 1;
+      old_header.minor_version == HASH_MINOR_VERSION &&
+      hash_file_complete(hash_filename, &old_header)) {
     old_hash_size = old_header.hash_size;
+    // Only the puts added since the old hash file can add entries to its table.
+    hash_header.hash_capacity = hash_capacity_for((log_header->num_puts - old_header.num_puts) + old_header.num_entries);
+    hash_header.hash_size = choose_hash_size(hash_size, old_hash_size, hash_header.hash_capacity);
+    // The old table can only be copied if the hash size stays the same.
+    copy_old = hash_header.hash_size == old_hash_size;
+  }
+  returncode = SPARKEY_SUCCESS;
+
+  if (copy_old) {
+    start = old_header.data_end;
+    hash_header.hash_seed = old_header.hash_seed;
+    hash_header.garbage_size = old_header.garbage_size;
   } else {
-    cap = log_header.num_puts * 1.3;
-    start = log_header.header_size;
-    TRY(rand32(&hash_seed), close_iter);
+    // Replaying the whole log can have every put in the table at once, before
+    // later deletes remove them, so size the table for all of them.
+    hash_header.hash_capacity = hash_capacity_for(log_header->num_puts);
+    hash_header.hash_size = choose_hash_size(hash_size, old_hash_size, hash_header.hash_capacity);
+    start = log_header->header_size;
+    TRY(rand32(&hash_header.hash_seed), close_iter);
     hash_header.garbage_size = 0;
-    copy_old = 0;
-    returncode = SPARKEY_SUCCESS;
   }
 
-  hash_header.hash_capacity = 1 | (uint64_t) cap;
+  hash_header.max_key_len = log_header->max_key_len;
+  hash_header.max_value_len = log_header->max_value_len;
+  hash_header.data_end = log_header->data_end;
+  hash_header.num_puts = log_header->num_puts;
 
-  hash_header.hash_seed = hash_seed;
-  hash_header.max_key_len = log_header.max_key_len;
-  hash_header.max_value_len = log_header.max_value_len;
-  hash_header.data_end = log_header.data_end;
-  hash_header.num_puts = log_header.num_puts;
-
-  hash_header.entry_block_bits = int_log2(log_header.max_entries_per_block);
+  hash_header.entry_block_bits = int_log2(log_header->max_entries_per_block);
   hash_header.entry_block_bitmask = (1 << hash_header.entry_block_bits) - 1;
 
   if (hash_header.data_end < (1ULL << (32 - hash_header.entry_block_bits))) {
     hash_header.address_size = 4;
   } else {
     hash_header.address_size = 8;
-  }
-  if (old_hash_size == 8 || hash_header.hash_capacity >= (1 << 23)) {
-    hash_header.hash_size = 8;
-  } else {
-    hash_header.hash_size = 4;
-  }
-  if (hash_size != 0) {
-    if (hash_size == 4 || hash_size == 8) {
-      hash_header.hash_size = hash_size;
-    } else {
-      returncode = SPARKEY_HASH_SIZE_INVALID;
-      goto close_iter;
-    }
-  }
-  if (hash_header.hash_size != old_hash_size) {
-    copy_old = 0;
   }
   hash_header.hash_algorithm = sparkey_get_hash_algorithm(hash_header.hash_size);
 
@@ -443,9 +501,9 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   hash_header.hash_collisions = 0;
 
   if (copy_old) {
-    if (old_header.data_end == log->header.data_end) {
+    if (old_header.data_end == log_header->data_end) {
       // Nothing needs to be done - just exit
-      goto close_iter;
+      goto free_hashtable;
     }
     TRY(fill_hash(hashtable, hash_filename, &old_header, &hash_header), free_hashtable);
     TRY(sparkey_logiter_seek(iter, log, start), free_hashtable);
@@ -469,7 +527,8 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
     uint64_t iter_block_start = iter->block_position;
     uint64_t iter_entry_count = iter->entry_count;
 
-    uint64_t key_hash = sparkey_iter_hash(&hash_header, iter, log);
+    uint64_t key_hash;
+    TRY(sparkey_iter_hash(&hash_header, iter, log, &key_hash), free_hashtable);
     uint64_t wanted_slot = key_hash % hash_header.hash_capacity;
 
     switch (iter->type) {
@@ -486,25 +545,50 @@ normal_exit:
 
   calculate_max_displacement(&hash_header, hashtable);
 
-  // Try removing it first, to avoid overwriting existing files that readers may be using.
-  if (remove(hash_filename) < 0) {
-    int e = errno;
-    if (e != ENOENT) {
-      returncode = sparkey_remove_returncode(e);
-      goto free_hashtable;
-    }
+  // Write to a temporary file and rename it over the old one, so readers never see
+  // a partially written file and a failed write leaves the old file intact.
+  // Readers that already have the old file open keep using it.
+  char *tmp_filename = NULL;
+  int fd = -1;
+  TRY(create_temp_file(hash_filename, &tmp_filename, &fd), free_hashtable);
+  // Keep the permissions of the file being replaced.
+  struct stat old_stat;
+  if (stat(hash_filename, &old_stat) == 0 && fchmod(fd, old_stat.st_mode & 07777) < 0) {
+    returncode = sparkey_create_returncode(errno);
+    goto remove_temp;
   }
-  int fd = creat(hash_filename, 00644);
   hash_header.major_version = HASH_MAJOR_VERSION;
   hash_header.minor_version = HASH_MINOR_VERSION;
-  hash_header.file_identifier = log_header.file_identifier;
-  hash_header.data_end = log_header.data_end;
+  hash_header.file_identifier = log_header->file_identifier;
+  hash_header.data_end = log_header->data_end;
 
-  TRY(write_hashheader(fd, &hash_header), close_hash);
-  TRY(write_full(fd, hashtable, hashsize), close_hash);
+  TRY(write_hashheader(fd, &hash_header), remove_temp);
+  TRY(write_full(fd, hashtable, hashsize), remove_temp);
+  // Make sure the data is on disk before the rename, so a crash cannot leave
+  // the new file in place without its contents.
+  if (fsync(fd) < 0) {
+    returncode = errno == ENOSPC ? SPARKEY_OUT_OF_DISK : SPARKEY_INTERNAL_ERROR;
+    goto remove_temp;
+  }
+  int close_result = close(fd);
+  fd = -1;
+  if (close_result < 0) {
+    returncode = errno == ENOSPC ? SPARKEY_OUT_OF_DISK : SPARKEY_INTERNAL_ERROR;
+    goto remove_temp;
+  }
+  if (rename(tmp_filename, hash_filename) < 0) {
+    returncode = sparkey_create_returncode(errno);
+    goto remove_temp;
+  }
+  free(tmp_filename);
+  goto free_hashtable;
 
-close_hash:
-  close(fd);
+remove_temp:
+  if (fd >= 0) {
+    close(fd);
+  }
+  unlink(tmp_filename);
+  free(tmp_filename);
 
 free_hashtable:
   free(hashtable);

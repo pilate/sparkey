@@ -39,6 +39,14 @@ static void assert_log_filename(const char *expected, const char *index_filename
   free(actual);
 }
 
+static void assert_open_returncode(sparkey_returncode expected, int e) {
+  sparkey_returncode actual = sparkey_open_returncode(e);
+  if (expected != actual) {
+    printf("Expected %d for errno %d but got %d\n", expected, e, actual);
+    exit(1);
+  }
+}
+
 int main(void) {
   assert_log_filename(NULL, NULL);
   assert_log_filename(NULL, "");
@@ -46,6 +54,9 @@ int main(void) {
   assert_log_filename(".spl", ".spi");
   assert_log_filename(NULL, ".spx");
   assert_log_filename("foo.spl", "foo.spi");
+
+  assert_open_returncode(SPARKEY_TOO_MANY_OPEN_FILES, ENFILE);
+  assert_open_returncode(SPARKEY_TOO_MANY_OPEN_FILES, EMFILE);
 
   printf("Success!\n");
 }

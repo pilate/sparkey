@@ -40,6 +40,7 @@ sparkey_returncode sparkey_hash_open(sparkey_hashreader **reader_ref, const char
   }
 
   reader->open_status = 0;
+  reader->fd = -1;
 
   TRY(sparkey_load_hashheader(&reader->header, hash_filename), free_reader);
   TRY(sparkey_logreader_open_noalloc(&reader->log, log_filename), free_reader);
@@ -70,7 +71,10 @@ sparkey_returncode sparkey_hash_open(sparkey_hashreader **reader_ref, const char
   reader->data_len = reader->header.header_size + reader->header.hash_capacity * (reader->header.hash_size + reader->header.address_size);
 
   struct stat s;
-  stat(hash_filename, &s);
+  if (fstat(reader->fd, &s) < 0) {
+    returncode = sparkey_open_returncode(errno);
+    goto close_reader;
+  }
   if (reader->data_len > (uint64_t) s.st_size) {
     returncode = SPARKEY_HASH_TOO_SMALL;
     goto close_reader;
@@ -87,6 +91,10 @@ sparkey_returncode sparkey_hash_open(sparkey_hashreader **reader_ref, const char
   return SPARKEY_SUCCESS;
 
 close_reader:
+  // sparkey_hash_close only closes the hash file of a fully opened reader.
+  if (reader->fd >= 0) {
+    close(reader->fd);
+  }
   sparkey_hash_close(&reader);
   return returncode;
 
@@ -209,7 +217,8 @@ sparkey_returncode sparkey_logiter_hashnext(sparkey_logiter *iter, sparkey_hashr
     }
     uint64_t position = (iter->entry_block_position << reader->header.entry_block_bits) | iter->entry_count;
 
-    uint64_t key_hash = sparkey_iter_hash(&reader->header, iter, &reader->log);
+    uint64_t key_hash;
+    RETHROW(sparkey_iter_hash(&reader->header, iter, &reader->log, &key_hash));
     uint64_t wanted_slot = key_hash % reader->header.hash_capacity;
 
     uint64_t pos = wanted_slot * slot_size;

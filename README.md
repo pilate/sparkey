@@ -10,10 +10,11 @@ command line utility for creating, inspecting and reading sparkey index/log
 files (`sparkey`).
 
 This is a fork of [spotify/sparkey](https://github.com/spotify/sparkey).
-Version 2.0.0 modernizes the build (CMake, current GCC and Clang, GitHub Actions
-CI) and fixes several bugs. The file formats and the library ABI are unchanged,
-so existing sparkey files, and programs and bindings linked against
-`libsparkey.so.0`, keep working.
+Version 2.0 modernizes the build (CMake, current GCC and Clang, GitHub Actions
+CI) and fixes several bugs, and 2.0.1 adds [Python bindings](python/README.md)
+and fixes crash safety, leaks and hangs in hash writing. The file formats and
+the library ABI are unchanged, so existing sparkey files, and programs and
+bindings linked against `libsparkey.so.0`, keep working.
 
 Dependencies
 ------------
@@ -47,6 +48,11 @@ Installing
 ----------
     sudo cmake --install build && sudo ldconfig
 
+### Python bindings
+
+[`python/`](python/README.md) has fast bindings compatible with
+spotify/sparkey-python. Install them with `pip install .` from this directory.
+
 ### Debian packages
 
 To build `.deb` packages instead (`libsparkey0`, `libsparkey-dev`,
@@ -59,7 +65,7 @@ packages are written to the parent directory.
 Related projects
 ----------------
 
-* [spotify/sparkey-python: Python bindings](https://github.com/spotify/sparkey-python)
+* [spotify/sparkey-python: Python bindings (ctypes)](https://github.com/spotify/sparkey-python)
 * [spotify/sparkey-java: Java implementation](https://github.com/spotify/sparkey-java)
 * [emnl/gnista: Ruby bindings](https://github.com/emnl/gnista)
 * [tiegz/sparkey-go: Go bindings](https://github.com/tiegz/sparkey-go)

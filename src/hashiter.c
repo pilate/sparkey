@@ -20,27 +20,29 @@
 #include "sparkey-internal.h"
 #include "hashiter.h"
 
-uint64_t sparkey_iter_hash(sparkey_hashheader *hash_header, sparkey_logiter *iter, sparkey_logreader *log) {
+sparkey_returncode sparkey_iter_hash(sparkey_hashheader *hash_header, sparkey_logiter *iter, sparkey_logreader *log, uint64_t *hash) {
   uint8_t *buf;
   uint64_t len;
-  sparkey_returncode returncode = sparkey_logiter_keychunk(iter, log, iter->keylen, &buf, &len);
-  if (returncode != SPARKEY_SUCCESS) {
-    return 0;
-  }
+  RETHROW(sparkey_logiter_keychunk(iter, log, iter->keylen, &buf, &len));
   if (len == iter->keylen) {
-    return hash_header->hash_algorithm.hash(buf, len, hash_header->hash_seed);
-  } else {
-    uint8_t *keybuf = malloc(iter->keylen);
-    memcpy(keybuf, buf, len);
-    uint64_t len2;
-    returncode = sparkey_logiter_fill_key(iter, log, iter->keylen - len, keybuf + len, &len2);
-    if (len + len2 != iter->keylen) {
-      free(keybuf);
-      return 0;
-    }
-    uint64_t hash = hash_header->hash_algorithm.hash(keybuf, iter->keylen, hash_header->hash_seed);
-    free(keybuf);
-    return hash;
+    *hash = hash_header->hash_algorithm.hash(buf, len, hash_header->hash_seed);
+    return SPARKEY_SUCCESS;
   }
+
+  uint8_t *keybuf = malloc(iter->keylen);
+  if (keybuf == NULL) {
+    return SPARKEY_INTERNAL_ERROR;
+  }
+  memcpy(keybuf, buf, len);
+  uint64_t len2;
+  sparkey_returncode returncode = sparkey_logiter_fill_key(iter, log, iter->keylen - len, keybuf + len, &len2);
+  if (returncode == SPARKEY_SUCCESS && len + len2 != iter->keylen) {
+    returncode = SPARKEY_UNEXPECTED_EOF;
+  }
+  if (returncode == SPARKEY_SUCCESS) {
+    *hash = hash_header->hash_algorithm.hash(keybuf, iter->keylen, hash_header->hash_seed);
+  }
+  free(keybuf);
+  return returncode;
 }
 

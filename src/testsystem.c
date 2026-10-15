@@ -17,8 +17,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 #include "sparkey.h"
+#include "hashheader.h"
 
 static int max(int a, int b) {
   return a > b ? a : b;
@@ -256,6 +261,207 @@ void verify_files_closed(void) {
   assert_equals(SPARKEY_FILE_IDENTIFIER_MISMATCH, rc);
 }
 
+// Writes key<i> -> value<i> for i in [from, to), creating the log if from is 0.
+static void write_entries(const char *log_filename, int from, int to) {
+  sparkey_logwriter *writer;
+  if (from == 0) {
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_create(&writer, log_filename, SPARKEY_COMPRESSION_NONE, 0));
+  } else {
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_append(&writer, log_filename));
+  }
+  for (int i = from; i < to; i++) {
+    char key[32];
+    char value[32];
+    snprintf(key, sizeof(key), "key%d", i);
+    snprintf(value, sizeof(value), "value%d", i);
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_put(writer, strlen(key), (uint8_t *) key, strlen(value), (uint8_t *) value));
+  }
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(&writer));
+}
+
+// Deletes key<i> for i in [from, to) from an existing log.
+static void delete_entries(const char *log_filename, int from, int to) {
+  sparkey_logwriter *writer;
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_append(&writer, log_filename));
+  for (int i = from; i < to; i++) {
+    char key[32];
+    snprintf(key, sizeof(key), "key%d", i);
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_delete(writer, strlen(key), (uint8_t *) key));
+  }
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(&writer));
+}
+
+// Checks that key<i> maps to value<i> for i in [from, to).
+static void verify_reader_entries(sparkey_hashreader *reader, int from, int to) {
+  sparkey_logiter *iter;
+  sparkey_logreader *logreader = sparkey_hash_getreader(reader);
+  assert_equals(SPARKEY_SUCCESS, sparkey_logiter_create(&iter, logreader));
+  for (int i = from; i < to; i++) {
+    char key[32];
+    char expected[32];
+    uint8_t value[32];
+    uint64_t len;
+    snprintf(key, sizeof(key), "key%d", i);
+    snprintf(expected, sizeof(expected), "value%d", i);
+    assert_equals(SPARKEY_SUCCESS, sparkey_hash_get(reader, (uint8_t *) key, strlen(key), iter));
+    assert_equals(SPARKEY_ITER_ACTIVE, sparkey_logiter_state(iter));
+    assert_equals(SPARKEY_SUCCESS, sparkey_logiter_fill_value(iter, logreader, sizeof(value) - 1, value, &len));
+    value[len] = '\0';
+    assert_str_equals(expected, (char *) value);
+  }
+  sparkey_logiter_close(&iter);
+}
+
+static void verify_entries(const char *hash_filename, const char *log_filename, int from, int to) {
+  sparkey_hashreader *reader;
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&reader, hash_filename, log_filename));
+  verify_reader_entries(reader, from, to);
+  sparkey_hash_close(&reader);
+}
+
+// Counts the files in the current directory whose name starts with prefix.
+static int count_files(const char *prefix) {
+  int count = 0;
+  DIR *dir = opendir(".");
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    if (strncmp(entry->d_name, prefix, strlen(prefix)) == 0) {
+      count++;
+    }
+  }
+  closedir(dir);
+  return count;
+}
+
+void verify_truncated_hash_rebuild(void) {
+  // Updating a hash file that is smaller than its header says used to hang.
+  // It should be rebuilt from scratch instead.
+  write_entries("truncated.spl", 0, 100);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("truncated.spi", "truncated.spl", 0));
+  assert_equals(0, truncate("truncated.spi", 200));
+  write_entries("truncated.spl", 100, 110);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("truncated.spi", "truncated.spl", 0));
+  verify_entries("truncated.spi", "truncated.spl", 0, 110);
+}
+
+void verify_hash_rewrite(void) {
+  // A hash file is replaced atomically: readers that already have it open keep
+  // seeing the old version, and no temporary files are left behind.
+  write_entries("rewrite.spl", 0, 100);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("rewrite.spi", "rewrite.spl", 0));
+  sparkey_hashreader *old_reader;
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&old_reader, "rewrite.spi", "rewrite.spl"));
+  write_entries("rewrite.spl", 100, 200);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("rewrite.spi", "rewrite.spl", 0));
+  verify_reader_entries(old_reader, 0, 100);
+  sparkey_hash_close(&old_reader);
+  verify_entries("rewrite.spi", "rewrite.spl", 0, 200);
+  assert_equals(0, count_files("rewrite.spi.tmp"));
+
+  // Failures are reported and clean up after themselves.
+  assert_equals(SPARKEY_FILE_NOT_FOUND, sparkey_hash_write("no-such-dir/rewrite.spi", "rewrite.spl", 0));
+  rmdir("directory.spi");
+  assert_equals(0, mkdir("directory.spi", 0755));
+  assert_equals(SPARKEY_FILE_IS_DIRECTORY, sparkey_hash_write("directory.spi", "rewrite.spl", 0));
+  assert_equals(0, count_files("directory.spi.tmp"));
+  assert_equals(0, rmdir("directory.spi"));
+}
+
+void verify_hash_size_change_rebuild(void) {
+  // Changing the hash size rebuilds the hash file from the whole log. The table
+  // used to be sized for the entries of the old hash file only, so replaying
+  // puts that are deleted later in the log filled it up and hung.
+  write_entries("resize.spl", 0, 1000);
+  delete_entries("resize.spl", 1, 1000);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("resize.spi", "resize.spl", 4));
+  write_entries("resize.spl", 1000, 1001);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("resize.spi", "resize.spl", 8));
+
+  sparkey_hashreader *reader;
+  sparkey_logiter *iter;
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&reader, "resize.spi", "resize.spl"));
+  assert_equals(2, sparkey_hash_numentries(reader));
+  verify_reader_entries(reader, 0, 1);
+  verify_reader_entries(reader, 1000, 1001);
+  assert_equals(SPARKEY_SUCCESS, sparkey_logiter_create(&iter, sparkey_hash_getreader(reader)));
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_get(reader, (uint8_t *) "key1", 4, iter));
+  assert_equals(SPARKEY_ITER_INVALID, sparkey_logiter_state(iter));
+  sparkey_logiter_close(&iter);
+  sparkey_hash_close(&reader);
+
+  // The old garbage size used to be counted again on top of the replayed log.
+  sparkey_hashheader resized;
+  sparkey_hashheader fresh;
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("fresh.spi", "resize.spl", 8));
+  assert_equals(SPARKEY_SUCCESS, sparkey_load_hashheader(&resized, "resize.spi"));
+  assert_equals(SPARKEY_SUCCESS, sparkey_load_hashheader(&fresh, "fresh.spi"));
+  assert_equals(fresh.garbage_size, resized.garbage_size);
+}
+
+// Returns the number of open file descriptors. If it changes after some
+// operation, that operation leaked a file descriptor.
+static int count_open_fds(void) {
+  int count = 0;
+  for (int fd = 0; fd < 1024; fd++) {
+    if (fcntl(fd, F_GETFD) != -1) {
+      count++;
+    }
+  }
+  return count;
+}
+
+// Creates a file that is too short to hold a sparkey header.
+static void write_short_file(const char *filename) {
+  FILE *fp = fopen(filename, "w");
+  fputs("ab", fp);
+  fclose(fp);
+}
+
+void verify_failed_header_loads_close_files(void) {
+  write_short_file("short.spl");
+  write_short_file("short.spi");
+  int fds = count_open_fds();
+  for (int i = 0; i < 10; i++) {
+    sparkey_logreader *logreader;
+    sparkey_hashreader *hashreader;
+    sparkey_logwriter *logwriter;
+    assert_equals(SPARKEY_UNEXPECTED_EOF, sparkey_logreader_open(&logreader, "short.spl"));
+    assert_equals(SPARKEY_UNEXPECTED_EOF, sparkey_logwriter_append(&logwriter, "short.spl"));
+    assert_equals(SPARKEY_UNEXPECTED_EOF, sparkey_hash_open(&hashreader, "short.spi", "short.spl"));
+  }
+  assert_equals(fds, count_open_fds());
+}
+
+void verify_failed_hash_open_closes_files(void) {
+  write_entries("toosmall.spl", 0, 100);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("toosmall.spi", "toosmall.spl", 0));
+  assert_equals(0, truncate("toosmall.spi", 200));
+  int fds = count_open_fds();
+  for (int i = 0; i < 10; i++) {
+    sparkey_hashreader *reader;
+    assert_equals(SPARKEY_HASH_TOO_SMALL, sparkey_hash_open(&reader, "toosmall.spi", "toosmall.spl"));
+  }
+  assert_equals(fds, count_open_fds());
+}
+
+void verify_hash_write_up_to_date(void) {
+  // Writing a hash file that is already up to date does nothing. This used to
+  // leak the hash table, which the sanitizer CI job detects.
+  write_entries("uptodate.spl", 0, 100);
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("uptodate.spi", "uptodate.spl", 0));
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("uptodate.spi", "uptodate.spl", 0));
+  verify_entries("uptodate.spi", "uptodate.spl", 0, 100);
+}
+
+void verify_logwriter_double_close(void) {
+  // Closing a writer twice used to dereference NULL.
+  sparkey_logwriter *writer;
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_create(&writer, "doubleclose.spl", SPARKEY_COMPRESSION_NONE, 0));
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(&writer));
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(&writer));
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(NULL));
+}
+
 int main(void) {
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 0, 0, 0);
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 1, 0, 0);
@@ -279,6 +485,13 @@ int main(void) {
   }
 
   verify_files_closed();
+  verify_truncated_hash_rebuild();
+  verify_hash_rewrite();
+  verify_failed_header_loads_close_files();
+  verify_failed_hash_open_closes_files();
+  verify_hash_write_up_to_date();
+  verify_logwriter_double_close();
+  verify_hash_size_change_rebuild();
 
   printf("Success!\n");
 }

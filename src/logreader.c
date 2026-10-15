@@ -59,19 +59,22 @@ sparkey_returncode sparkey_logreader_open_noalloc(sparkey_logreader *log, const 
   TRY(sparkey_load_logheader(&log->header, filename), cleanup);
   log->data_len = log->header.data_end;
 
-  struct stat s;
-  stat(filename, &s);
-  if (log->data_len > (uint64_t) s.st_size) {
-    returncode = SPARKEY_LOG_TOO_SMALL;
-    goto cleanup;
-  }
-
   fd = open(filename, O_RDONLY);
   if (fd < 0) {
     returncode = sparkey_open_returncode(errno);
     goto cleanup;
   }
   log->fd = fd;
+
+  struct stat s;
+  if (fstat(fd, &s) < 0) {
+    returncode = sparkey_open_returncode(errno);
+    goto cleanup;
+  }
+  if (log->data_len > (uint64_t) s.st_size) {
+    returncode = SPARKEY_LOG_TOO_SMALL;
+    goto cleanup;
+  }
 
   log->data = mmap(NULL, log->data_len, PROT_READ, MAP_SHARED, fd, 0);
   if (log->data == MAP_FAILED) {

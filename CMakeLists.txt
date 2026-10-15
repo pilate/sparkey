@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(sparkey VERSION 2.0.0 LANGUAGES C)
+project(sparkey VERSION 2.0.1 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -87,7 +87,10 @@ if(BUILD_TESTING)
     target_link_libraries(${test} PRIVATE ${SPARKEY_LINK_LIBRARY})
     sparkey_set_warnings(${test})
     add_test(NAME ${test} COMMAND ${test})
+    set_tests_properties(${test} PROPERTIES TIMEOUT 120)
   endforeach()
+  add_test(NAME testcli COMMAND sh ${PROJECT_SOURCE_DIR}/src/testcli.sh $<TARGET_FILE:sparkey_cli>)
+  set_tests_properties(testcli PROPERTIES TIMEOUT 120)
 endif()
 
 find_package(Doxygen)

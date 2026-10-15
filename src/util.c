@@ -26,7 +26,8 @@ sparkey_returncode sparkey_open_returncode(int e) {
   switch (e) {
   case EPERM:
   case EACCES: return SPARKEY_PERMISSION_DENIED;
-  case ENFILE: return SPARKEY_TOO_MANY_OPEN_FILES;
+  case ENFILE:
+  case EMFILE: return SPARKEY_TOO_MANY_OPEN_FILES;
   case ENOENT: return SPARKEY_FILE_NOT_FOUND;
   case EOVERFLOW: return SPARKEY_FILE_TOO_LARGE;
   default:
@@ -41,6 +42,7 @@ sparkey_returncode sparkey_create_returncode(int e) {
   case EROFS:
   case EACCES: return SPARKEY_PERMISSION_DENIED;
   case EEXIST: return SPARKEY_FILE_ALREADY_EXISTS;
+  case ENOENT: return SPARKEY_FILE_NOT_FOUND;
   case EISDIR: return SPARKEY_FILE_IS_DIRECTORY;
   case ENFILE:
   case EMFILE: return SPARKEY_TOO_MANY_OPEN_FILES;
