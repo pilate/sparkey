@@ -40,8 +40,16 @@ static uint32_t sparkey_zstd_max_compressed_size(uint32_t block_size) {
   return ZSTD_compressBound(block_size);
 }
 
-static sparkey_returncode sparkey_zstd_decompress(uint8_t *input, uint32_t compressed_size, uint8_t *output, uint32_t *uncompressed_size) {
-  size_t ret = ZSTD_decompress(output, *uncompressed_size, input, compressed_size);
+// ZSTD_decompress creates a context for every block, and reusing one is
+// faster.
+static sparkey_returncode sparkey_zstd_decompress(void **context, uint8_t *input, uint32_t compressed_size, uint8_t *output, uint32_t *uncompressed_size) {
+  if (*context == NULL) {
+    *context = ZSTD_createDCtx();
+    if (*context == NULL) {
+      return SPARKEY_INTERNAL_ERROR;
+    }
+  }
+  size_t ret = ZSTD_decompressDCtx(*context, output, *uncompressed_size, input, compressed_size);
   if (ZSTD_isError(ret)) {
     return SPARKEY_INTERNAL_ERROR;
   }
@@ -58,6 +66,10 @@ static sparkey_returncode sparkey_zstd_compress(uint8_t *input, uint32_t uncompr
   return SPARKEY_SUCCESS;
 }
 
+static void sparkey_zstd_free_context(void *context) {
+  ZSTD_freeDCtx(context);
+}
+
 struct sparkey_compressor sparkey_compressors[] = {
   {
     .max_compressed_size = NULL,
@@ -71,6 +83,7 @@ struct sparkey_compressor sparkey_compressors[] = {
     .max_compressed_size = sparkey_zstd_max_compressed_size,
     .decompress = sparkey_zstd_decompress,
     .compress = sparkey_zstd_compress,
+    .free_context = sparkey_zstd_free_context,
   },
 };
 

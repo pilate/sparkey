@@ -46,6 +46,9 @@ struct sparkey_logiter {
   // compression buffer
   int compression_buf_allocated;
   uint8_t *compression_buf;
+  // Created by the decompressor on first use, if it needs one.
+  sparkey_compression_type compression_type;
+  void *decompress_context;
 
   // Snappy blocks are decompressed lazily: only the first block_decoded
   // bytes of compression_buf are valid, and snappy_next is the next
@@ -109,10 +112,13 @@ struct sparkey_hashreader {
 sparkey_returncode sparkey_logreader_open_noalloc(sparkey_logreader *log, const char *filename);
 void sparkey_logreader_close_nodealloc(sparkey_logreader *log);
 
+// decompress may store a context in *context, initially NULL, to reuse for
+// later blocks. It is freed with free_context.
 struct sparkey_compressor {
   uint32_t (*max_compressed_size)(uint32_t block_size);
-  sparkey_returncode (*decompress)(uint8_t *input, uint32_t compressed_size, uint8_t *output, uint32_t *uncompressed_size);
+  sparkey_returncode (*decompress)(void **context, uint8_t *input, uint32_t compressed_size, uint8_t *output, uint32_t *uncompressed_size);
   sparkey_returncode (*compress)(uint8_t *input, uint32_t uncompressed_size, uint8_t *output, uint32_t *compressed_size);
+  void (*free_context)(void *context);
 };
 
 extern struct sparkey_compressor sparkey_compressors[3];

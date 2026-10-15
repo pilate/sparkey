@@ -172,6 +172,8 @@ sparkey_returncode sparkey_logiter_create(sparkey_logiter **iter_ref, sparkey_lo
   iter->hashnext_hashes = NULL;
   iter->hashnext_addresses = NULL;
   iter->hashnext_states = NULL;
+  iter->compression_type = log->header.compression_type;
+  iter->decompress_context = NULL;
   iter->hashnext_capacity = 0;
   iter->hashnext_count = 0;
   iter->hashnext_cursor = 0;
@@ -208,6 +210,9 @@ void sparkey_logiter_close(sparkey_logiter **iter_ref) {
     free(iter->compression_buf);
   }
   free(iter->hashnext_hashes);
+  if (iter->decompress_context != NULL) {
+    sparkey_compressors[iter->compression_type].free_context(iter->decompress_context);
+  }
   free(iter);
   *iter_ref = NULL;
 }
@@ -246,7 +251,7 @@ static sparkey_returncode seekblock(sparkey_logiter *iter, sparkey_logreader *lo
     uint32_t uncompressed_size = log->header.compression_block_size;
 
     sparkey_returncode ret = sparkey_compressors[log->header.compression_type].decompress(
-      &log->data[pos], compressed_size, iter->compression_buf, &uncompressed_size);
+      &iter->decompress_context, &log->data[pos], compressed_size, iter->compression_buf, &uncompressed_size);
     if (ret != SPARKEY_SUCCESS) {
       return ret;
     }
