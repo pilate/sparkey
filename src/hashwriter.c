@@ -93,7 +93,7 @@ static sparkey_returncode hash_delete(uint64_t wanted_slot, uint64_t hash, uint8
   uint64_t slot = wanted_slot;
 
   while (1) {
-    uint64_t hash2 = hash_header->hash_algorithm.read_hash(hashtable, pos);
+    uint64_t hash2 = read_addr(hashtable, pos, hash_header->hash_size);
     uint64_t position2 = read_addr(hashtable, pos + hash_header->hash_size, hash_header->address_size);
     if (position2 == 0) {
         return SPARKEY_SUCCESS;
@@ -124,7 +124,7 @@ static sparkey_returncode hash_delete(uint64_t wanted_slot, uint64_t hash, uint8
             uint64_t next_slot = (slot + 1) % hash_header->hash_capacity;
             uint64_t next_pos = next_slot * slot_size;
 
-            uint64_t hash3 = hash_header->hash_algorithm.read_hash(hashtable, next_pos);
+            uint64_t hash3 = read_addr(hashtable, next_pos, hash_header->hash_size);
             uint64_t position3 = read_addr(hashtable, next_pos + hash_header->hash_size, hash_header->address_size);
             if (position3 == 0) {
                 break;
@@ -134,14 +134,14 @@ static sparkey_returncode hash_delete(uint64_t wanted_slot, uint64_t hash, uint8
             }
 
             uint64_t pos3 = slot * slot_size;
-            hash_header->hash_algorithm.write_hash(&hashtable[pos3], hash3);
+            write_addr(&hashtable[pos3], hash3, hash_header->hash_size);
             write_addr(&hashtable[pos3 + hash_header->hash_size], position3, hash_header->address_size);
 
             slot = next_slot;
           }
 
           uint64_t pos3 = slot * slot_size;
-          hash_header->hash_algorithm.write_hash(&hashtable[pos3], 0);
+          write_addr(&hashtable[pos3], 0, hash_header->hash_size);
           write_addr(&hashtable[pos3 + hash_header->hash_size], 0, hash_header->address_size);
           deleted_entry(hash_header, keylen2, valuelen2);
 
@@ -175,10 +175,10 @@ static sparkey_returncode hash_put(uint64_t wanted_slot, uint64_t hash, uint8_t 
 
   int might_be_collision = iter != NULL && ra_iter != NULL && log != NULL;
   while (1) {
-    uint64_t hash2 = hash_header->hash_algorithm.read_hash(hashtable, pos);
+    uint64_t hash2 = read_addr(hashtable, pos, hash_header->hash_size);
     uint64_t position2 = read_addr(hashtable, pos + hash_header->hash_size, hash_header->address_size);
     if (position2 == 0) {
-      hash_header->hash_algorithm.write_hash(&hashtable[pos], hash);
+      write_addr(&hashtable[pos], hash, hash_header->hash_size);
       write_addr(&hashtable[pos + hash_header->hash_size], position, hash_header->address_size);
       added_entry(hash_header);
       return SPARKEY_SUCCESS;
@@ -202,7 +202,7 @@ static sparkey_returncode hash_put(uint64_t wanted_slot, uint64_t hash, uint8_t 
         int cmp;
         RETHROW(sparkey_logiter_keycmp(iter, ra_iter, log, &cmp));
         if (cmp == 0) {
-          hash_header->hash_algorithm.write_hash(&hashtable[pos], hash);
+          write_addr(&hashtable[pos], hash, hash_header->hash_size);
           write_addr(&hashtable[pos + hash_header->hash_size], position, hash_header->address_size);
           replaced_entry(hash_header, keylen2, valuelen2);
           return SPARKEY_SUCCESS;
@@ -213,7 +213,7 @@ static sparkey_returncode hash_put(uint64_t wanted_slot, uint64_t hash, uint8_t 
     uint64_t other_displacement = get_displacement(hash_header->hash_capacity, slot, hash2);
     if (displacement > other_displacement) {
       // Steal the slot, and move the other one
-      hash_header->hash_algorithm.write_hash(&hashtable[pos], hash);
+      write_addr(&hashtable[pos], hash, hash_header->hash_size);
       write_addr(&hashtable[pos + hash_header->hash_size], position, hash_header->address_size);
       position = position2;
       displacement = other_displacement;
@@ -250,7 +250,7 @@ static void calculate_max_displacement(sparkey_hashheader *hash_header, uint8_t 
   int has_prev = 0;
   uint64_t prev_hash = -1;
   for (uint64_t slot = 0; slot < capacity; slot++) {
-    uint64_t hash = hash_header->hash_algorithm.read_hash(hashtable, slot * slot_size);
+    uint64_t hash = read_addr(hashtable, slot * slot_size, hash_header->hash_size);
     if (has_prev && prev_hash == hash) {
       num_hash_collisions++;
     }
@@ -305,7 +305,7 @@ static sparkey_returncode read_fully(int fd, uint8_t *buf, size_t count) {
 static sparkey_returncode hash_copy(uint8_t *hashtable, uint8_t *buf, size_t buffer_size, sparkey_hashheader *old_header, sparkey_hashheader *new_header) {
   int slot_size = old_header->address_size + old_header->hash_size;
   for (unsigned int i = 0; i < buffer_size; i += slot_size) {
-    uint64_t hash = old_header->hash_algorithm.read_hash(buf, i);
+    uint64_t hash = read_addr(buf, i, old_header->hash_size);
     uint64_t position = read_addr(buf, i + old_header->hash_size, old_header->address_size);
 
     int entry_index = (int) (position) & old_header->entry_block_bitmask;

@@ -19,6 +19,17 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <string.h>
+
+#if defined(__linux)
+#include <byteswap.h>
+#elif defined(__APPLE__)
+#include <libkern/OSByteOrder.h>
+#define bswap_32 OSSwapInt32
+#define bswap_64 OSSwapInt64
+#else
+#error "no byteswap.h or libkern/OSByteOrder.h"
+#endif
 
 #include "sparkey.h"
 
@@ -42,7 +53,12 @@ sparkey_returncode write_full(int fd, uint8_t *buf, size_t count);
  * @param buf buf to write to. Must be at least 4 bytes long.
  * @param value the value to write.
  */
-void write_little_endian32(uint8_t *buf, uint32_t value);
+static inline void write_little_endian32(uint8_t *buf, uint32_t value) {
+  buf[0] = (value >> 0) & 0xFF;
+  buf[1] = (value >> 8) & 0xFF;
+  buf[2] = (value >> 16) & 0xFF;
+  buf[3] = (value >> 24) & 0xFF;
+}
 
 /**
  * Write a 32 bit value to file in little endian.
@@ -58,7 +74,16 @@ sparkey_returncode fwrite_little_endian32(int fd, uint32_t value);
  * @param buf buf to write to. Must be at least 8 bytes long.
  * @param value the value to write.
  */
-void write_little_endian64(uint8_t *buf, uint64_t value);
+static inline void write_little_endian64(uint8_t *buf, uint64_t value) {
+  buf[0] = (value >> 0) & 0xFF;
+  buf[1] = (value >> 8) & 0xFF;
+  buf[2] = (value >> 16) & 0xFF;
+  buf[3] = (value >> 24) & 0xFF;
+  buf[4] = (value >> 32) & 0xFF;
+  buf[5] = (value >> 40) & 0xFF;
+  buf[6] = (value >> 48) & 0xFF;
+  buf[7] = (value >> 56) & 0xFF;
+}
 
 /**
  * Write a 64 bit value to file in little endian.
@@ -68,8 +93,35 @@ void write_little_endian64(uint8_t *buf, uint64_t value);
  * writing to file fails.
  */
 sparkey_returncode fwrite_little_endian64(int fd, uint64_t value);
-uint32_t read_little_endian32(const uint8_t * array, uint64_t pos);
-uint64_t read_little_endian64(const uint8_t * array, uint64_t pos);
+// glibc defines both __LITTLE_ENDIAN and __BIG_ENDIAN on every platform, so
+// they cannot be used to detect the byte order.
+#if defined(__BYTE_ORDER__) ? __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ : defined(__LITTLE_ENDIAN__)
+static inline uint32_t read_little_endian32(const uint8_t * array, uint64_t pos) {
+  uint32_t value;
+  memcpy(&value, array + pos, sizeof(value));
+  return value;
+}
+
+static inline uint64_t read_little_endian64(const uint8_t * array, uint64_t pos) {
+  uint64_t value;
+  memcpy(&value, array + pos, sizeof(value));
+  return value;
+}
+#elif defined(__BYTE_ORDER__) ? __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__ : defined(__BIG_ENDIAN__)
+static inline uint32_t read_little_endian32(const uint8_t * array, uint64_t pos) {
+  uint32_t value;
+  memcpy(&value, array + pos, sizeof(value));
+  return bswap_32(value);
+}
+
+static inline uint64_t read_little_endian64(const uint8_t * array, uint64_t pos) {
+  uint64_t value;
+  memcpy(&value, array + pos, sizeof(value));
+  return bswap_64(value);
+}
+#else
+#error "cannot determine the byte order: neither __BYTE_ORDER__ nor __LITTLE_ENDIAN__/__BIG_ENDIAN__ is defined"
+#endif
 sparkey_returncode correct_endian_platform(void);
 
 sparkey_returncode fread_little_endian32(FILE *fp, uint32_t *res);
