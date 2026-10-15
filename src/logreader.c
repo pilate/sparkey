@@ -170,8 +170,11 @@ sparkey_returncode sparkey_logiter_create(sparkey_logiter **iter_ref, sparkey_lo
   iter->block_decoded = 0;
   iter->state = SPARKEY_ITER_NEW;
   iter->hashnext_hashes = NULL;
+  iter->hashnext_addresses = NULL;
+  iter->hashnext_states = NULL;
   iter->hashnext_capacity = 0;
-  iter->hashnext_block = 0;
+  iter->hashnext_count = 0;
+  iter->hashnext_cursor = 0;
 
   if (sparkey_uses_compressor(log->header.compression_type)) {
     iter->compression_buf_allocated = 1;

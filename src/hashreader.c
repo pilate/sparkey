@@ -250,34 +250,43 @@ static int put_is_live(sparkey_hashreader *reader, uint8_t *hashtable, int slot_
 #define HASHNEXT_LIVE (2)
 #define HASHNEXT_DEAD (3)
 
+// How many entries of an uncompressed log lookup_entries looks up at once.
+#define HASHNEXT_UNCOMPRESSED_ENTRIES (64)
+
 // Looking up each put in a large hash table is a cache miss, and looking them
-// up one at a time leaves a scan waiting on each in turn. This looks up all
-// the puts in the current block at once, from the current entry on: it
-// hashes their keys and starts loading their slots, so that the misses
-// overlap, before reading any of them. Puts whose keys continue in the next
-// block are left to sparkey_logiter_hashnext.
+// up one at a time leaves a scan waiting on each in turn. This looks up many
+// puts at once, from the current entry on: it hashes their keys and starts
+// loading their slots, so that the misses overlap, before reading any of
+// them. In a compressed log it looks up the rest of the current block, and
+// puts whose keys continue in the next block are left to
+// sparkey_logiter_hashnext.
 // The block must be fully decompressed and the current key not yet read.
-static void lookup_block(sparkey_logiter *iter, sparkey_hashreader *reader, uint8_t *hashtable, int slot_size) {
-  iter->hashnext_block = 0;
-  uint64_t capacity = reader->log.header.max_entries_per_block;
+static void lookup_entries(sparkey_logiter *iter, sparkey_hashreader *reader, uint8_t *hashtable, int slot_size) {
+  iter->hashnext_count = 0;
+  iter->hashnext_cursor = 0;
+  int compressed = reader->log.header.compression_type != SPARKEY_COMPRESSION_NONE;
+  uint64_t capacity = compressed ? reader->log.header.max_entries_per_block : HASHNEXT_UNCOMPRESSED_ENTRIES;
   if (iter->hashnext_capacity < capacity) {
     free(iter->hashnext_hashes);
     iter->hashnext_hashes = NULL;
     iter->hashnext_capacity = 0;
-    if (capacity > SIZE_MAX / (sizeof(uint64_t) + 1)) {
+    if (capacity > SIZE_MAX / (2 * sizeof(uint64_t) + 1)) {
       return;
     }
-    iter->hashnext_hashes = malloc(capacity * (sizeof(uint64_t) + 1));
+    iter->hashnext_hashes = malloc(capacity * (2 * sizeof(uint64_t) + 1));
     if (iter->hashnext_hashes == NULL) {
       return;
     }
+    iter->hashnext_addresses = iter->hashnext_hashes + capacity;
+    iter->hashnext_states = (uint8_t *) (iter->hashnext_addresses + capacity);
     iter->hashnext_capacity = capacity;
   }
   if (iter->hashnext_hashes == NULL) {
     return;
   }
   uint64_t *hashes = iter->hashnext_hashes;
-  uint8_t *state = (uint8_t *) (hashes + iter->hashnext_capacity);
+  uint64_t *addresses = iter->hashnext_addresses;
+  uint8_t *state = iter->hashnext_states;
 
   const uint8_t *buf = iter->compression_buf;
   uint64_t end = iter->block_len;
@@ -285,8 +294,15 @@ static void lookup_block(sparkey_logiter *iter, sparkey_hashreader *reader, uint
   uint64_t keylen = iter->keylen;
   uint64_t valuelen = iter->valuelen;
   int put = iter->type == SPARKEY_ENTRY_PUT;
+  // Entries of a compressed log are addressed by their block and their
+  // index in it, and those of an uncompressed log by where they start.
+  uint64_t first_address = compressed ?
+    (iter->entry_block_position << reader->header.entry_block_bits) | iter->entry_count :
+    iter->entry_block_position;
+  uint64_t entry_start = 0;
   uint64_t n = 0;
   while (n < iter->hashnext_capacity) {
+    addresses[n] = compressed ? first_address + n : first_address + entry_start;
     state[n] = HASHNEXT_UNKNOWN;
     if (keylen > end - pos) {
       n++;
@@ -295,9 +311,7 @@ static void lookup_block(sparkey_logiter *iter, sparkey_hashreader *reader, uint
     if (put) {
       hashes[n] = reader->header.hash_algorithm.hash(&buf[pos], keylen, reader->header.hash_seed);
       state[n] = HASHNEXT_HASHED;
-#if defined(__GNUC__)
-      __builtin_prefetch(&hashtable[capacity_mod(&reader->header, hashes[n]) * slot_size]);
-#endif
+      PREFETCH_SLOT(hashtable, &reader->header, hashes[n]);
     }
     n++;
     pos += keylen;
@@ -305,6 +319,7 @@ static void lookup_block(sparkey_logiter *iter, sparkey_hashreader *reader, uint
       break;
     }
     pos += valuelen;
+    entry_start = pos;
     uint64_t a, b;
     if (!read_vlq_before(buf, end, &pos, &a) || !read_vlq_before(buf, end, &pos, &b)) {
       break;
@@ -314,15 +329,25 @@ static void lookup_block(sparkey_logiter *iter, sparkey_hashreader *reader, uint
     valuelen = put ? b : 0;
   }
 
-  uint64_t first_position = iter->entry_block_position << reader->header.entry_block_bits;
   for (uint64_t i = 0; i < n; i++) {
     if (state[i] == HASHNEXT_HASHED) {
-      state[i] = put_is_live(reader, hashtable, slot_size, hashes[i], first_position | i) ? HASHNEXT_LIVE : HASHNEXT_DEAD;
+      state[i] = put_is_live(reader, hashtable, slot_size, hashes[i], addresses[i]) ? HASHNEXT_LIVE : HASHNEXT_DEAD;
     }
   }
-  iter->hashnext_block = iter->entry_block_position;
   iter->hashnext_data_end = reader->header.data_end;
   iter->hashnext_count = n;
+}
+
+// Returns what lookup_entries found for the entry at address, which is the
+// entry after the last one asked about, or -1 if it did not look it up.
+static int looked_up_state(sparkey_logiter *iter, sparkey_hashreader *reader, uint64_t address) {
+  uint64_t i = iter->hashnext_cursor;
+  if (i >= iter->hashnext_count || iter->hashnext_data_end != reader->header.data_end ||
+      iter->hashnext_addresses[i] != address) {
+    return -1;
+  }
+  iter->hashnext_cursor++;
+  return iter->hashnext_states[i];
 }
 
 sparkey_returncode sparkey_logiter_hashnext(sparkey_logiter *iter, sparkey_hashreader *reader) {
@@ -340,9 +365,21 @@ sparkey_returncode sparkey_logiter_hashnext(sparkey_logiter *iter, sparkey_hashr
     if (iter->state != SPARKEY_ITER_ACTIVE) {
       return SPARKEY_SUCCESS;
     }
-    if (!all_puts_live && iter->entry_count == 0 && iter->block_decoded >= iter->block_len &&
-        reader->log.header.compression_type != SPARKEY_COMPRESSION_NONE) {
-      lookup_block(iter, reader, hashtable, slot_size);
+    uint64_t position = (iter->entry_block_position << reader->header.entry_block_bits) | iter->entry_count;
+    if (!all_puts_live) {
+      // Which puts are live depends only on the log up to the end of the part
+      // that the hash file indexes, so earlier lookups still hold.
+      int state = looked_up_state(iter, reader, position);
+      if (state < 0 && iter->block_decoded >= iter->block_len) {
+        lookup_entries(iter, reader, hashtable, slot_size);
+        state = looked_up_state(iter, reader, position);
+      }
+      if (state == HASHNEXT_LIVE) {
+        return SPARKEY_SUCCESS;
+      }
+      if (state == HASHNEXT_DEAD) {
+        continue;
+      }
     }
     if (iter->type != SPARKEY_ENTRY_PUT) {
       continue;
@@ -351,21 +388,6 @@ sparkey_returncode sparkey_logiter_hashnext(sparkey_logiter *iter, sparkey_hashr
       return SPARKEY_SUCCESS;
     }
 
-    // Which puts are live depends only on the log up to the end of the part
-    // that the hash file indexes, so earlier lookups of the block still hold.
-    if (iter->hashnext_block == iter->entry_block_position &&
-        iter->hashnext_data_end == reader->header.data_end &&
-        (uint64_t) iter->entry_count < iter->hashnext_count) {
-      uint8_t state = ((uint8_t *) (iter->hashnext_hashes + iter->hashnext_capacity))[iter->entry_count];
-      if (state == HASHNEXT_LIVE) {
-        return SPARKEY_SUCCESS;
-      }
-      if (state == HASHNEXT_DEAD) {
-        continue;
-      }
-    }
-
-    uint64_t position = (iter->entry_block_position << reader->header.entry_block_bits) | iter->entry_count;
     uint64_t key_hash;
     RETHROW(sparkey_iter_hash(&reader->header, iter, &reader->log, &key_hash));
     if (put_is_live(reader, hashtable, slot_size, key_hash, position)) {
