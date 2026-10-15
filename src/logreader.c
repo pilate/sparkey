@@ -362,21 +362,32 @@ static inline uint64_t next_entry_in_block(sparkey_logiter *iter) {
   return len;
 }
 
+// The entries of an uncompressed log are addressed by where they start, so
+// the iterator treats the log from the entry at block_offset on as its block.
+static inline void rebase_uncompressed(sparkey_logiter *iter, sparkey_logreader *log) {
+  iter->block_position += iter->block_offset;
+  iter->block_len -= iter->block_offset;
+  iter->block_offset = 0;
+  iter->compression_buf = &log->data[iter->block_position];
+  iter->entry_count = -1;
+}
+
 sparkey_returncode sparkey_logiter_next(sparkey_logiter *iter, sparkey_logreader *log) {
   if (iter->state == SPARKEY_ITER_CLOSED) {
     return SPARKEY_SUCCESS;
   }
 
-  // In a compressed log, most entries are followed by another in the same
-  // block, and the iterator can step straight to it.
-  if (log->header.compression_type != SPARKEY_COMPRESSION_NONE) {
-    uint64_t len = next_entry_in_block(iter);
-    if (len != UINT64_MAX) {
-      iter->state = SPARKEY_ITER_INVALID;
-      RETHROW(assert_iter_open(iter, log));
-      iter->block_offset += len;
-      return read_entry_header(iter);
+  // Most entries are followed by another in the same block, and the
+  // iterator can step straight to it. An uncompressed log is one block.
+  uint64_t len = next_entry_in_block(iter);
+  if (len != UINT64_MAX) {
+    iter->state = SPARKEY_ITER_INVALID;
+    RETHROW(assert_iter_open(iter, log));
+    iter->block_offset += len;
+    if (log->header.compression_type == SPARKEY_COMPRESSION_NONE) {
+      rebase_uncompressed(iter, log);
     }
+    return read_entry_header(iter);
   }
   uint64_t key_remaining = 0;
   uint64_t value_remaining = 0;
@@ -403,11 +414,7 @@ sparkey_returncode sparkey_logiter_next(sparkey_logiter *iter, sparkey_logreader
   }
 
   if (log->header.compression_type == SPARKEY_COMPRESSION_NONE) {
-  	iter->block_position += iter->block_offset;
-  	iter->block_len -= iter->block_offset;
-  	iter->block_offset = 0;
-    iter->compression_buf = &log->data[iter->block_position];
-    iter->entry_count = -1;
+    rebase_uncompressed(iter, log);
   }
 
   return read_entry_header(iter);
@@ -497,6 +504,9 @@ sparkey_returncode sparkey_logiter_fill_key(sparkey_logiter *iter, sparkey_logre
     buf += len2;
     *len += len2;
     maxlen -= len2;
+    if (iter->key_remaining == 0) {
+      return SPARKEY_SUCCESS;
+    }
   }
   return SPARKEY_SUCCESS;
 }
@@ -514,6 +524,9 @@ sparkey_returncode sparkey_logiter_fill_value(sparkey_logiter *iter, sparkey_log
     buf += len2;
     *len += len2;
     maxlen -= len2;
+    if (iter->value_remaining == 0) {
+      return SPARKEY_SUCCESS;
+    }
   }
   return SPARKEY_SUCCESS;
 }
