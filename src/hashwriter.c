@@ -72,26 +72,6 @@ static int unsigned_vlq_size(uint64_t value) {
 }
 
 
-// Returns hash % hash_capacity. The writer needs this for every slot it
-// probes and a 64-bit division is slow, so where 128-bit integers are
-// available it multiplies instead (Lemire, Kaser and Kurz, "Faster
-// Remainder by Direct Computation", 2019).
-static inline uint64_t capacity_mod(sparkey_hashheader *hash_header, uint64_t hash) {
-#ifdef __SIZEOF_INT128__
-  __extension__ unsigned __int128 low = hash_header->capacity_fastmod * hash;
-  __extension__ unsigned __int128 bottom = ((low & UINT64_MAX) * hash_header->hash_capacity) >> 64;
-  __extension__ unsigned __int128 top = (low >> 64) * hash_header->hash_capacity;
-  return (bottom + top) >> 64;
-#else
-  return hash % hash_header->hash_capacity;
-#endif
-}
-
-static inline uint64_t displacement_of(sparkey_hashheader *hash_header, uint64_t slot, uint64_t hash) {
-  uint64_t wanted_slot = capacity_mod(hash_header, hash);
-  return slot >= wanted_slot ? slot - wanted_slot : hash_header->hash_capacity + slot - wanted_slot;
-}
-
 static void added_entry(sparkey_hashheader *hash_header) {
   hash_header->num_entries++;
 }
@@ -504,9 +484,7 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
     hash_header.address_size = 8;
   }
   hash_header.hash_algorithm = sparkey_get_hash_algorithm(hash_header.hash_size);
-#ifdef __SIZEOF_INT128__
-  hash_header.capacity_fastmod = (__extension__ (unsigned __int128) -1) / hash_header.hash_capacity + 1;
-#endif
+  set_capacity_fastmod(&hash_header);
 
   int slot_size = hash_header.hash_size + hash_header.address_size;
   uint64_t hashsize = slot_size * hash_header.hash_capacity;

@@ -51,7 +51,7 @@ typedef struct {
   uint64_t total_displacement;
   sparkey_hash_algorithm hash_algorithm;
 #ifdef __SIZEOF_INT128__
-  // Set by sparkey_hash_write for computing hash % hash_capacity.
+  // Set by set_capacity_fastmod, for computing hash % hash_capacity.
   __extension__ unsigned __int128 capacity_fastmod;
 #endif
 } sparkey_hashheader;
@@ -78,9 +78,33 @@ void print_hashheader(sparkey_hashheader *header);
  */
 sparkey_returncode write_hashheader(int fd, sparkey_hashheader *header);
 
-static inline uint64_t get_displacement(uint64_t capacity, uint64_t slot, uint64_t hash) {
-  uint64_t wanted_slot = hash % capacity;
-  return (capacity + (slot - wanted_slot)) % capacity;
+// hash_capacity must not be 0.
+static inline void set_capacity_fastmod(sparkey_hashheader *hash_header) {
+#ifdef __SIZEOF_INT128__
+  hash_header->capacity_fastmod = (__extension__ (unsigned __int128) -1) / hash_header->hash_capacity + 1;
+#else
+  (void) hash_header;
+#endif
+}
+
+// Returns hash % hash_capacity. This is needed for every slot probed and a
+// 64-bit division is slow, so where 128-bit integers are available it
+// multiplies instead (Lemire, Kaser and Kurz, "Faster Remainder by Direct
+// Computation", 2019).
+static inline uint64_t capacity_mod(sparkey_hashheader *hash_header, uint64_t hash) {
+#ifdef __SIZEOF_INT128__
+  __extension__ unsigned __int128 low = hash_header->capacity_fastmod * hash;
+  __extension__ unsigned __int128 bottom = ((low & UINT64_MAX) * hash_header->hash_capacity) >> 64;
+  __extension__ unsigned __int128 top = (low >> 64) * hash_header->hash_capacity;
+  return (bottom + top) >> 64;
+#else
+  return hash % hash_header->hash_capacity;
+#endif
+}
+
+static inline uint64_t displacement_of(sparkey_hashheader *hash_header, uint64_t slot, uint64_t hash) {
+  uint64_t wanted_slot = capacity_mod(hash_header, hash);
+  return slot >= wanted_slot ? slot - wanted_slot : hash_header->hash_capacity + slot - wanted_slot;
 }
 
 static inline uint64_t read_addr(uint8_t *hashtable, uint64_t pos, int address_size) {

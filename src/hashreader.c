@@ -138,7 +138,7 @@ static sparkey_returncode assert_reader_open(sparkey_hashreader *reader) {
 sparkey_returncode sparkey_hash_get(sparkey_hashreader *reader, const uint8_t *key, uint64_t keylen, sparkey_logiter *iter) {
   RETHROW(assert_reader_open(reader));
   uint64_t hash = reader->header.hash_algorithm.hash(key, keylen, reader->header.hash_seed);
-  uint64_t wanted_slot = hash % reader->header.hash_capacity;
+  uint64_t wanted_slot = capacity_mod(&reader->header, hash);
 
   int slot_size = reader->header.address_size + reader->header.hash_size;
   uint64_t pos = wanted_slot * slot_size;
@@ -184,7 +184,7 @@ sparkey_returncode sparkey_hash_get(sparkey_hashreader *reader, const uint8_t *k
         }
       }
     }
-    uint64_t other_displacement = get_displacement(reader->header.hash_capacity, slot, hash2);
+    uint64_t other_displacement = displacement_of(&reader->header, slot, hash2);
     if (displacement > other_displacement) {
       iter->state = SPARKEY_ITER_INVALID;
       return SPARKEY_SUCCESS;
@@ -219,7 +219,7 @@ sparkey_returncode sparkey_logiter_hashnext(sparkey_logiter *iter, sparkey_hashr
 
     uint64_t key_hash;
     RETHROW(sparkey_iter_hash(&reader->header, iter, &reader->log, &key_hash));
-    uint64_t wanted_slot = key_hash % reader->header.hash_capacity;
+    uint64_t wanted_slot = capacity_mod(&reader->header, key_hash);
 
     uint64_t pos = wanted_slot * slot_size;
 
@@ -237,7 +237,7 @@ sparkey_returncode sparkey_logiter_hashnext(sparkey_logiter *iter, sparkey_hashr
         RETHROW(sparkey_logiter_reset(iter, &reader->log));
         return SPARKEY_SUCCESS;
       }
-      uint64_t other_displacement = get_displacement(reader->header.hash_capacity, slot, hash2);
+      uint64_t other_displacement = displacement_of(&reader->header, slot, hash2);
       if (displacement > other_displacement) {
         break;
       }
