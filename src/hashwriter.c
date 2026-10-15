@@ -510,13 +510,17 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
 
   int slot_size = hash_header.hash_size + hash_header.address_size;
   uint64_t hashsize = slot_size * hash_header.hash_capacity;
-  uint8_t *hashtable = malloc(hashsize);
-  if (hashtable == NULL) {
-    fprintf(stderr, "sparkey_hash_write():%d bug: could not malloc %"PRIu64" bytes\n", __LINE__, hashsize);
+  // An anonymous mapping is zero-filled lazily, so no memset is needed, and
+  // huge pages make the random accesses into a large table cheaper.
+  uint8_t *hashtable = mmap(NULL, hashsize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (hashtable == MAP_FAILED) {
+    fprintf(stderr, "sparkey_hash_write():%d bug: could not mmap %"PRIu64" bytes\n", __LINE__, hashsize);
     returncode = SPARKEY_INTERNAL_ERROR;
     goto close_iter;
   }
-  memset(hashtable, 0, hashsize);
+#ifdef MADV_HUGEPAGE
+  madvise(hashtable, hashsize, MADV_HUGEPAGE);
+#endif
 
   hash_header.max_displacement = 0;
   hash_header.total_displacement = 0;
@@ -614,7 +618,7 @@ remove_temp:
   free(tmp_filename);
 
 free_hashtable:
-  free(hashtable);
+  munmap(hashtable, hashsize);
 
 close_iter:
   sparkey_logiter_close(&iter);
