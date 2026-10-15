@@ -10,10 +10,11 @@ command line utility for creating, inspecting and reading sparkey index/log
 files (`sparkey`).
 
 This is a fork of [spotify/sparkey](https://github.com/spotify/sparkey).
-Version 2.0.0 modernizes the build (CMake, current GCC and Clang, GitHub Actions
-CI) and fixes several bugs. The file formats and the library ABI are unchanged,
-so existing sparkey files, and programs and bindings linked against
-`libsparkey.so.0`, keep working.
+Version 2.0 modernizes the build (CMake, current GCC and Clang, GitHub Actions
+CI) and fixes several bugs, and 2.0.1 adds [Python bindings](python/README.md)
+and fixes crash safety, leaks and hangs in hash writing. The file formats and
+the library ABI are unchanged, so existing sparkey files, and programs and
+bindings linked against `libsparkey.so.0`, keep working.
 
 Dependencies
 ------------

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(sparkey VERSION 2.0.0 LANGUAGES C)
+project(sparkey VERSION 2.0.1 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)

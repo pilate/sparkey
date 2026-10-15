@@ -1,3 +1,20 @@
+sparkey (2.0.1) unstable; urgency=medium
+
+  * Add Python bindings, compatible with spotify/sparkey-python.
+  * Replace hash files atomically, sync them to disk before the rename and
+    keep the permissions of the file being replaced.
+  * Fix sparkey_hash_write hanging on a truncated hash file, when the hash
+    size changes, and when the log is appended to while it is indexed.
+  * Fix file descriptor and memory leaks on error paths and when the hash
+    file is already up to date.
+  * Make sparkey_logwriter_close safe to call on a closed writer.
+  * Check the results of stat, lseek and malloc, and report EMFILE as
+    SPARKEY_TOO_MANY_OPEN_FILES.
+  * Detect big-endian platforms correctly when reading files.
+  * Stop sparkey appendlog from silently dropping input.
+
+ -- Pilate <noptical@gmail.com>  Wed, 14 Oct 2026 20:21:09 -0700
+
 sparkey (2.0.0) unstable; urgency=medium
 
   * Version 2.0.0. The library soname is unchanged (libsparkey.so.0).
