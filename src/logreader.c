@@ -169,6 +169,9 @@ sparkey_returncode sparkey_logiter_create(sparkey_logiter **iter_ref, sparkey_lo
   iter->block_len = 0;
   iter->block_decoded = 0;
   iter->state = SPARKEY_ITER_NEW;
+  iter->hashnext_hashes = NULL;
+  iter->hashnext_capacity = 0;
+  iter->hashnext_block = 0;
 
   if (sparkey_uses_compressor(log->header.compression_type)) {
     iter->compression_buf_allocated = 1;
@@ -201,6 +204,7 @@ void sparkey_logiter_close(sparkey_logiter **iter_ref) {
   if (iter->compression_buf_allocated) {
     free(iter->compression_buf);
   }
+  free(iter->hashnext_hashes);
   free(iter);
   *iter_ref = NULL;
 }
@@ -294,7 +298,10 @@ static sparkey_returncode ensure_available(sparkey_logiter *iter, sparkey_logrea
   RETHROW(seekblock(iter, log, iter->next_block_position));
   iter->entry_count = -1;
 
-  return SPARKEY_SUCCESS;
+  // A block that is reached by reading on from the previous one is usually
+  // read in full, and decompressing it in one go is cheaper than a little at
+  // a time.
+  return ensure_decoded(iter, iter->block_len);
 }
 
 static sparkey_returncode skip(sparkey_logiter *iter, sparkey_logreader *log, uint64_t len) {
@@ -334,9 +341,39 @@ static inline sparkey_returncode read_entry_header(sparkey_logiter *iter) {
   return SPARKEY_SUCCESS;
 }
 
+// Returns how far the entry after the current one is from block_offset, if it
+// starts in the current block, or UINT64_MAX if it does not.
+static inline uint64_t next_entry_in_block(sparkey_logiter *iter) {
+  uint64_t len = 0;
+  if (iter->state == SPARKEY_ITER_ACTIVE) {
+    len = iter->key_remaining + iter->value_remaining;
+    if (len < iter->key_remaining) {
+      return UINT64_MAX;
+    }
+  } else if (iter->state != SPARKEY_ITER_NEW) {
+    return UINT64_MAX;
+  }
+  if (len >= iter->block_len - iter->block_offset) {
+    return UINT64_MAX;
+  }
+  return len;
+}
+
 sparkey_returncode sparkey_logiter_next(sparkey_logiter *iter, sparkey_logreader *log) {
   if (iter->state == SPARKEY_ITER_CLOSED) {
     return SPARKEY_SUCCESS;
+  }
+
+  // In a compressed log, most entries are followed by another in the same
+  // block, and the iterator can step straight to it.
+  if (log->header.compression_type != SPARKEY_COMPRESSION_NONE) {
+    uint64_t len = next_entry_in_block(iter);
+    if (len != UINT64_MAX) {
+      iter->state = SPARKEY_ITER_INVALID;
+      RETHROW(assert_iter_open(iter, log));
+      iter->block_offset += len;
+      return read_entry_header(iter);
+    }
   }
   uint64_t key_remaining = 0;
   uint64_t value_remaining = 0;
@@ -393,14 +430,8 @@ sparkey_returncode sparkey_logiter_skip(sparkey_logiter *iter, sparkey_logreader
       (iter->state == SPARKEY_ITER_NEW || iter->state == SPARKEY_ITER_ACTIVE)) {
     RETHROW(assert_iter_open(iter, log));
     while (count > 0) {
-      uint64_t len = 0;
-      if (iter->state == SPARKEY_ITER_ACTIVE) {
-        len = iter->key_remaining + iter->value_remaining;
-        if (len < iter->key_remaining) {
-          break;
-        }
-      }
-      if (len >= iter->block_len - iter->block_offset) {
+      uint64_t len = next_entry_in_block(iter);
+      if (len == UINT64_MAX) {
         break;
       }
       count--;

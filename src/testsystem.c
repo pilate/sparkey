@@ -24,6 +24,7 @@
 
 #include "sparkey.h"
 #include "hashheader.h"
+#include "logheader.h"
 
 static int max(int a, int b) {
   return a > b ? a : b;
@@ -462,6 +463,106 @@ void verify_logwriter_double_close(void) {
   assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(NULL));
 }
 
+// Puts key<i> -> <value_prefix><i> for i in [from, to) into a snappy log,
+// creating it if create is set.
+static void put_snappy_entries(const char *log_filename, int create, int from, int to, const char *value_prefix) {
+  sparkey_logwriter *writer;
+  if (create) {
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_create(&writer, log_filename, SPARKEY_COMPRESSION_SNAPPY, 1000));
+  } else {
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_append(&writer, log_filename));
+  }
+  for (int i = from; i < to; i++) {
+    char key[32];
+    char value[32];
+    snprintf(key, sizeof(key), "key%d", i);
+    snprintf(value, sizeof(value), "%s%d", value_prefix, i);
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_put(writer, strlen(key), (uint8_t *) key, strlen(value), (uint8_t *) value));
+  }
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(&writer));
+}
+
+// Iterates with sparkey_logiter_hashnext and writes the keys it visits to
+// out, separated by spaces.
+static void hashnext_keys(sparkey_hashreader *reader, sparkey_logiter *iter, char *out) {
+  sparkey_logreader *log = sparkey_hash_getreader(reader);
+  out[0] = '\0';
+  while (1) {
+    assert_equals(SPARKEY_SUCCESS, sparkey_logiter_hashnext(iter, reader));
+    if (sparkey_logiter_state(iter) != SPARKEY_ITER_ACTIVE) {
+      return;
+    }
+    char key[32];
+    uint64_t len;
+    assert_equals(SPARKEY_SUCCESS, sparkey_logiter_fill_key(iter, log, sizeof(key) - 1, (uint8_t *) key, &len));
+    key[len] = '\0';
+    if (out[0] != '\0') {
+      strcat(out, " ");
+    }
+    strcat(out, key);
+  }
+}
+
+void verify_hashnext_skips_unindexed_entries(void) {
+  // Entries appended to the log after the hash file was written are not in
+  // it, both when every put is live and when some are not.
+  for (int garbage = 0; garbage <= 1; garbage++) {
+    put_snappy_entries("unindexed.spl", 1, 0, 5, "value");
+    if (garbage) {
+      put_snappy_entries("unindexed.spl", 0, 0, 1, "newvalue");
+    }
+    assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("unindexed.spi", "unindexed.spl", 0));
+    put_snappy_entries("unindexed.spl", 0, 5, 7, "value");
+
+    sparkey_hashreader *reader;
+    sparkey_logiter *iter;
+    assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&reader, "unindexed.spi", "unindexed.spl"));
+    assert_equals(SPARKEY_SUCCESS, sparkey_logiter_create(&iter, sparkey_hash_getreader(reader)));
+    char keys[256];
+    hashnext_keys(reader, iter, keys);
+    assert_str_equals(garbage ? "key1 key2 key3 key4 key0" : "key0 key1 key2 key3 key4", keys);
+    sparkey_logiter_close(&iter);
+    sparkey_hash_close(&reader);
+    remove("unindexed.spi");
+  }
+}
+
+void verify_hashnext_after_hash_rebuild(void) {
+  // An iterator remembers which entries of a block are live. A hash file that
+  // indexes more of the log can make some of them dead. All the entries here
+  // are in the first block, which the iterator then remembers.
+  sparkey_logwriter *writer;
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_create(&writer, "rebuild.spl", SPARKEY_COMPRESSION_SNAPPY, 1000));
+  const char *puts[] = {"key0", "key1", "key2", "key3", "key4", "key0"};
+  for (int i = 0; i < 6; i++) {
+    assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_put(writer, 4, (const uint8_t *) puts[i], 5, (const uint8_t *) "value"));
+  }
+  assert_equals(SPARKEY_SUCCESS, sparkey_logwriter_close(&writer));
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("rebuild.spi", "rebuild.spl", 0));
+
+  sparkey_hashreader *reader1;
+  sparkey_logiter *iter;
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&reader1, "rebuild.spi", "rebuild.spl"));
+  assert_equals(SPARKEY_SUCCESS, sparkey_logiter_create(&iter, sparkey_hash_getreader(reader1)));
+  char keys[256];
+  hashnext_keys(reader1, iter, keys);
+  assert_str_equals("key1 key2 key3 key4 key0", keys);
+
+  put_snappy_entries("rebuild.spl", 0, 1, 2, "newvalue");
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_write("rebuild.spi", "rebuild.spl", 0));
+  sparkey_hashreader *reader2;
+  assert_equals(SPARKEY_SUCCESS, sparkey_hash_open(&reader2, "rebuild.spi", "rebuild.spl"));
+  sparkey_logheader header;
+  assert_equals(SPARKEY_SUCCESS, sparkey_load_logheader(&header, "rebuild.spl"));
+  assert_equals(SPARKEY_SUCCESS, sparkey_logiter_seek(iter, sparkey_hash_getreader(reader2), header.header_size));
+  hashnext_keys(reader2, iter, keys);
+  assert_str_equals("key2 key3 key4 key0 key1", keys);
+
+  sparkey_logiter_close(&iter);
+  sparkey_hash_close(&reader1);
+  sparkey_hash_close(&reader2);
+}
+
 int main(void) {
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 0, 0, 0);
   verify(SPARKEY_COMPRESSION_NONE, 0, 0, 1, 0, 0);
@@ -492,6 +593,8 @@ int main(void) {
   verify_hash_write_up_to_date();
   verify_logwriter_double_close();
   verify_hash_size_change_rebuild();
+  verify_hashnext_skips_unindexed_entries();
+  verify_hashnext_after_hash_rebuild();
 
   printf("Success!\n");
 }

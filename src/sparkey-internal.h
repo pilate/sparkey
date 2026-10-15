@@ -64,6 +64,17 @@ struct sparkey_logiter {
   uint64_t valuelen;
   uint64_t key_remaining;
   uint64_t value_remaining;
+
+  // sparkey_logiter_hashnext looks up the puts of a block all at once.
+  // hashnext_hashes holds hashnext_capacity key hashes followed by as many
+  // bytes saying whether each entry of the block at hashnext_block is live,
+  // in a hash file that indexes the log up to hashnext_data_end. Only the
+  // first hashnext_count are set.
+  uint64_t *hashnext_hashes;
+  uint64_t hashnext_capacity;
+  uint64_t hashnext_block;
+  uint64_t hashnext_data_end;
+  uint64_t hashnext_count;
 };
 
 struct sparkey_logwriter {
