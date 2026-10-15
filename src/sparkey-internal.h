@@ -47,6 +47,14 @@ struct sparkey_logiter {
   int compression_buf_allocated;
   uint8_t *compression_buf;
 
+  // Snappy blocks are decompressed lazily: only the first block_decoded
+  // bytes of compression_buf are valid, and snappy_next is the next
+  // compressed byte to decode. block_decoded is UINT64_MAX for blocks that
+  // are available in full.
+  uint64_t block_decoded;
+  const uint8_t *snappy_next;
+  const uint8_t *snappy_end;
+
   // current entry
   uint64_t entry_block_position;
   uint64_t entry_block_offset;
@@ -95,5 +103,23 @@ struct sparkey_compressor {
 
 extern struct sparkey_compressor sparkey_compressors[3];
 int sparkey_uses_compressor(sparkey_compression_type t);
+
+// Bytes that sparkey_snappy_decompress_upto may write past the end of the
+// decompressed data. Output buffers must be this much larger than the block.
+#define SPARKEY_SNAPPY_SLACK (32)
+
+/**
+ * Reads the uncompressed length at the start of a snappy block and advances
+ * *src past it.
+ */
+sparkey_returncode sparkey_snappy_read_length(const uint8_t **src, const uint8_t *src_end, uint32_t *len);
+
+/**
+ * Continues decompressing a snappy block until at least want bytes of out
+ * (or all out_len bytes, if fewer) are decompressed.
+ * @param src the next compressed byte to decode, advanced past the bytes used.
+ * @param out_pos the number of bytes of out already decompressed, updated.
+ */
+sparkey_returncode sparkey_snappy_decompress_upto(const uint8_t **src, const uint8_t *src_end, uint8_t *out, uint64_t out_len, uint64_t *out_pos, uint64_t want);
 
 #endif

@@ -167,11 +167,12 @@ sparkey_returncode sparkey_logiter_create(sparkey_logiter **iter_ref, sparkey_lo
   iter->next_block_position = log->header.header_size;
   iter->block_offset = 0;
   iter->block_len = 0;
+  iter->block_decoded = 0;
   iter->state = SPARKEY_ITER_NEW;
 
   if (sparkey_uses_compressor(log->header.compression_type)) {
     iter->compression_buf_allocated = 1;
-    iter->compression_buf = malloc(log->header.compression_block_size);
+    iter->compression_buf = malloc(log->header.compression_block_size + SPARKEY_SNAPPY_SLACK);
     if (iter->compression_buf == NULL) {
       free(iter);
       return SPARKEY_INTERNAL_ERROR;
@@ -209,7 +210,28 @@ static sparkey_returncode seekblock(sparkey_logiter *iter, sparkey_logreader *lo
   if (iter->block_position == position) {
     return SPARKEY_SUCCESS;
   }
-  if (sparkey_uses_compressor(log->header.compression_type)) {
+  if (log->header.compression_type == SPARKEY_COMPRESSION_SNAPPY) {
+    uint64_t pos = position;
+    uint64_t compressed_size = read_vlq(log->data, &pos);
+    if (compressed_size > log->data_len - pos) {
+      return SPARKEY_INTERNAL_ERROR;
+    }
+    const uint8_t *src = &log->data[pos];
+    const uint8_t *src_end = src + compressed_size;
+    uint32_t uncompressed_size;
+    RETHROW(sparkey_snappy_read_length(&src, src_end, &uncompressed_size));
+    if (uncompressed_size > log->header.compression_block_size) {
+      return SPARKEY_INTERNAL_ERROR;
+    }
+
+    // Decompressed on demand by ensure_decoded.
+    iter->block_position = position;
+    iter->next_block_position = pos + compressed_size;
+    iter->block_len = uncompressed_size;
+    iter->block_decoded = 0;
+    iter->snappy_next = src;
+    iter->snappy_end = src_end;
+  } else if (sparkey_uses_compressor(log->header.compression_type)) {
     uint64_t pos = position;
     // TODO: assert that we're not reading > uint32_t
     uint32_t compressed_size = read_vlq(log->data, &pos);
@@ -225,13 +247,25 @@ static sparkey_returncode seekblock(sparkey_logiter *iter, sparkey_logreader *lo
     iter->block_position = position;
     iter->next_block_position = next_pos;
     iter->block_len = uncompressed_size;
+    iter->block_decoded = UINT64_MAX;
   } else {
     iter->compression_buf = &log->data[position];
     iter->block_position = position;
     iter->next_block_position = log->header.data_end;
     iter->block_len = log->data_len - position;
+    iter->block_decoded = UINT64_MAX;
   }
   return SPARKEY_SUCCESS;
+}
+
+// Makes sure that compression_buf holds the current block up to end (or to the
+// end of the block, if that comes first).
+static inline sparkey_returncode ensure_decoded(sparkey_logiter *iter, uint64_t end) {
+  if (end <= iter->block_decoded || iter->block_decoded >= iter->block_len) {
+    return SPARKEY_SUCCESS;
+  }
+  return sparkey_snappy_decompress_upto(&iter->snappy_next, iter->snappy_end,
+    iter->compression_buf, iter->block_len, &iter->block_decoded, end);
 }
 
 sparkey_returncode sparkey_logiter_seek(sparkey_logiter *iter, sparkey_logreader *log, uint64_t position) {
@@ -273,6 +307,33 @@ static sparkey_returncode skip(sparkey_logiter *iter, sparkey_logreader *log, ui
   return SPARKEY_SUCCESS;
 }
 
+// Reads the header of the entry at block_offset, which must be in the
+// current block.
+static inline sparkey_returncode read_entry_header(sparkey_logiter *iter) {
+  iter->entry_count++;
+
+  // An entry starts with two VLQs of at most 10 bytes, in the same block.
+  RETHROW(ensure_decoded(iter, iter->block_offset + 20));
+  uint64_t a = read_vlq(iter->compression_buf, &iter->block_offset);
+  uint64_t b = read_vlq(iter->compression_buf, &iter->block_offset);
+  if (a == 0) {
+    iter->keylen = iter->key_remaining = b;
+    iter->valuelen = iter->value_remaining = 0;
+    iter->type = SPARKEY_ENTRY_DELETE;
+  } else {
+    iter->keylen = iter->key_remaining = a - 1;
+    iter->valuelen = iter->value_remaining = b;
+    iter->type = SPARKEY_ENTRY_PUT;
+  }
+
+  iter->entry_block_position = iter->block_position;
+  iter->entry_block_offset = iter->block_offset;
+
+  iter->state = SPARKEY_ITER_ACTIVE;
+
+  return SPARKEY_SUCCESS;
+}
+
 sparkey_returncode sparkey_logiter_next(sparkey_logiter *iter, sparkey_logreader *log) {
   if (iter->state == SPARKEY_ITER_CLOSED) {
     return SPARKEY_SUCCESS;
@@ -309,26 +370,7 @@ sparkey_returncode sparkey_logiter_next(sparkey_logiter *iter, sparkey_logreader
     iter->entry_count = -1;
   }
 
-  iter->entry_count++;
-
-  uint64_t a = read_vlq(iter->compression_buf, &iter->block_offset);
-  uint64_t b = read_vlq(iter->compression_buf, &iter->block_offset);
-  if (a == 0) {
-    iter->keylen = iter->key_remaining = b;
-    iter->valuelen = iter->value_remaining = 0;
-    iter->type = SPARKEY_ENTRY_DELETE;
-  } else {
-    iter->keylen = iter->key_remaining = a - 1;
-    iter->valuelen = iter->value_remaining = b;
-    iter->type = SPARKEY_ENTRY_PUT;
-  }
-
-  iter->entry_block_position = iter->block_position;
-  iter->entry_block_offset = iter->block_offset;
-
-  iter->state = SPARKEY_ITER_ACTIVE;
-
-  return SPARKEY_SUCCESS;
+  return read_entry_header(iter);
 }
 
 sparkey_returncode sparkey_logiter_reset(sparkey_logiter *iter, sparkey_logreader *log) {
@@ -344,6 +386,29 @@ sparkey_returncode sparkey_logiter_reset(sparkey_logiter *iter, sparkey_logreade
 }
 
 sparkey_returncode sparkey_logiter_skip(sparkey_logiter *iter, sparkey_logreader *log, int count) {
+  // In a compressed log, a hash lookup skips to an entry within its block.
+  // Step from entry to entry directly while the next one starts in the
+  // current block, and leave the rest to sparkey_logiter_next.
+  if (count > 0 && sparkey_uses_compressor(log->header.compression_type) &&
+      (iter->state == SPARKEY_ITER_NEW || iter->state == SPARKEY_ITER_ACTIVE)) {
+    RETHROW(assert_iter_open(iter, log));
+    while (count > 0) {
+      uint64_t len = 0;
+      if (iter->state == SPARKEY_ITER_ACTIVE) {
+        len = iter->key_remaining + iter->value_remaining;
+        if (len < iter->key_remaining) {
+          break;
+        }
+      }
+      if (len >= iter->block_len - iter->block_offset) {
+        break;
+      }
+      count--;
+      iter->block_offset += len;
+      iter->state = SPARKEY_ITER_INVALID;
+      RETHROW(read_entry_header(iter));
+    }
+  }
   while (count > 0) {
     count--;
     RETHROW(sparkey_logiter_next(iter, log));
@@ -364,6 +429,7 @@ static sparkey_returncode sparkey_logiter_chunk(sparkey_logiter *iter, sparkey_l
     RETHROW(ensure_available(iter, log));
     uint64_t m = min64(*var, iter->block_len - iter->block_offset);
     m = min64(maxlen, m);
+    RETHROW(ensure_decoded(iter, iter->block_offset + m));
     *len = m;
     *res = &iter->compression_buf[iter->block_offset];
     iter->block_offset += m;
