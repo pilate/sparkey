@@ -1,3 +1,18 @@
+sparkey (2.0.2) unstable; urgency=medium
+
+  * Build hash files faster: allocate the table with mmap and ask for huge
+    pages, avoid 64-bit divisions, and prefetch hash table slots.
+  * Look up keys faster: avoid 64-bit divisions, decompress snappy blocks
+    only as far as a lookup reads, and reuse a zstd decompression context.
+  * Iterate logs and hash files faster, and look up which puts are live in
+    batches when iterating in hash order, for uncompressed logs too.
+  * Write log entries that fit in the current buffer faster.
+  * Hash keys faster by reading the tail of MurmurHash3 with word loads.
+  * Reject hash files with a capacity of 0 as corrupt.
+  * File formats, hashes and the library ABI are unchanged.
+
+ -- Pilate <noptical@gmail.com>  Thu, 15 Oct 2026 15:20:10 -0700
+
 sparkey (2.0.1) unstable; urgency=medium
 
   * Add Python bindings, compatible with spotify/sparkey-python.
