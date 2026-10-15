@@ -50,6 +50,10 @@ typedef struct {
   uint64_t hash_collisions;
   uint64_t total_displacement;
   sparkey_hash_algorithm hash_algorithm;
+#ifdef __SIZEOF_INT128__
+  // Set by sparkey_hash_write for computing hash % hash_capacity.
+  __extension__ unsigned __int128 capacity_fastmod;
+#endif
 } sparkey_hashheader;
 
 /**
