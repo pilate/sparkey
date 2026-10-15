@@ -102,6 +102,16 @@ static inline uint64_t capacity_mod(sparkey_hashheader *hash_header, uint64_t ha
 #endif
 }
 
+// Starts loading the slot a hash starts probing from. This is a macro because
+// GCC drops calls to a function that does nothing but prefetch, as it has no
+// side effects.
+#if defined(__GNUC__)
+#define PREFETCH_SLOT(hashtable, hash_header, hash) \
+  __builtin_prefetch(&(hashtable)[capacity_mod((hash_header), (hash)) * ((hash_header)->address_size + (hash_header)->hash_size)])
+#else
+#define PREFETCH_SLOT(hashtable, hash_header, hash) ((void) 0)
+#endif
+
 static inline uint64_t displacement_of(sparkey_hashheader *hash_header, uint64_t slot, uint64_t hash) {
   uint64_t wanted_slot = capacity_mod(hash_header, hash);
   return slot >= wanted_slot ? slot - wanted_slot : hash_header->hash_capacity + slot - wanted_slot;
