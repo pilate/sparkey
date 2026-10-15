@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sparkey"
+dynamic = ["version"]
+description = "Fast Python bindings for the sparkey key/value store"
+readme = "python/README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX",
+    "Programming Language :: C",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Database",
+]
+
+[project.urls]
+Homepage = "https://github.com/pilate/sparkey"
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+packages = ["sparkey"]
+
+[tool.setuptools.dynamic]
+version = {attr = "sparkey.__version__"}
+
+[tool.setuptools.package-data]
+sparkey = ["py.typed", "*.pyi"]
+
+[tool.setuptools.exclude-package-data]
+sparkey = ["*.c"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

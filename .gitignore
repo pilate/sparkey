@@ -11,3 +11,9 @@ debian/.debhelper/
 debian/debhelper-build-stamp
 
 /build*/
+
+# Python bindings
+__pycache__/
+*.so
+*.egg-info/
+/dist/

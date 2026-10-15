@@ -1,0 +1,5 @@
+include src/*.h
+include python/sparkey/*.c
+include python/README.md
+include python/bench/bench.py
+recursive-include python/tests *.py

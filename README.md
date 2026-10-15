@@ -47,6 +47,11 @@ Installing
 ----------
     sudo cmake --install build && sudo ldconfig
 
+### Python bindings
+
+[`python/`](python/README.md) has fast bindings compatible with
+spotify/sparkey-python. Install them with `pip install .` from this directory.
+
 ### Debian packages
 
 To build `.deb` packages instead (`libsparkey0`, `libsparkey-dev`,
@@ -59,7 +64,7 @@ packages are written to the parent directory.
 Related projects
 ----------------
 
-* [spotify/sparkey-python: Python bindings](https://github.com/spotify/sparkey-python)
+* [spotify/sparkey-python: Python bindings (ctypes)](https://github.com/spotify/sparkey-python)
 * [spotify/sparkey-java: Java implementation](https://github.com/spotify/sparkey-java)
 * [emnl/gnista: Ruby bindings](https://github.com/emnl/gnista)
 * [tiegz/sparkey-go: Go bindings](https://github.com/tiegz/sparkey-go)
