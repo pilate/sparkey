@@ -19,8 +19,8 @@ changes are:
 * **2.0.1** adds [Python bindings](python/README.md) and fixes crash safety,
   leaks and hangs in hash writing.
 * **2.0.2** makes the library faster. With 20 million keys, building a hash
-  file is 1.7 to 2.4 times as fast, looking up keys in a snappy-compressed log
-  2.3 times, and iterating in hash order 2.7 to 4.7 times, while reading and
+  file is 1.8 to 2 times as fast, looking up keys in a snappy-compressed log
+  2 times, and iterating in hash order 2.8 to 4.6 times, while reading and
   writing the same files.
 
 Dependencies

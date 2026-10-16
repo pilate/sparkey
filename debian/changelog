@@ -7,7 +7,6 @@ sparkey (2.0.2) unstable; urgency=medium
   * Iterate logs and hash files faster, and look up which puts are live in
     batches when iterating in hash order, for uncompressed logs too.
   * Write log entries that fit in the current buffer faster.
-  * Hash keys faster by reading the tail of MurmurHash3 with word loads.
   * Reject hash files with a capacity of 0 as corrupt.
   * File formats, hashes and the library ABI are unchanged.
 
