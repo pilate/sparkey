@@ -292,8 +292,33 @@ static sparkey_returncode log_add(sparkey_logwriter *log, uint64_t num1, uint64_
   uint64_t written2 = write_vlq(buf2, num2);
 
   *datasize = written1 + written2 + len1 + len2;
+  int compressed = sparkey_uses_compressor(log->header.compression_type);
+
+  // Fast path: the whole entry fits in the current buffer.
+  sparkey_buf *buf = compressed ? &log->block_buf : &log->file_buf;
+  if ((uint64_t) *datasize <= buf_remaining(buf)) {
+    memcpy(buf->cur, buf1, written1);
+    buf->cur += written1;
+    memcpy(buf->cur, buf2, written2);
+    buf->cur += written2;
+    // data may be NULL when len is 0, which memcpy does not allow.
+    if (len1 > 0) {
+      memcpy(buf->cur, data1, len1);
+      buf->cur += len1;
+    }
+    if (len2 > 0) {
+      memcpy(buf->cur, data2, len2);
+      buf->cur += len2;
+    }
+    if (compressed) {
+      log->entry_count++;
+      log->flushed = 0;
+    }
+    return SPARKEY_SUCCESS;
+  }
+
   uint64_t remaining;
-  if (sparkey_uses_compressor(log->header.compression_type)) {
+  if (compressed) {
     remaining = buf_remaining(&log->block_buf);
     // todo: make it smarter by checking if it's better to flush directly
     uint64_t fits_in_one = written1 + written2 + len1 + len2 <= buf_size(&log->block_buf);

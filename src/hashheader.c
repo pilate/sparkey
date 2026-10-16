@@ -58,6 +58,10 @@ static sparkey_returncode hashheader_version0(sparkey_hashheader *header, FILE *
     return SPARKEY_HASH_HEADER_CORRUPT;
   }
   // Some basic consistency checks
+  if (header->hash_capacity == 0) {
+    return SPARKEY_HASH_HEADER_CORRUPT;
+  }
+  set_capacity_fastmod(header);
   if (header->num_entries > header->num_puts) {
     return SPARKEY_HASH_HEADER_CORRUPT;
   }

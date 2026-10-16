@@ -85,7 +85,16 @@ static void deleted_entry(sparkey_hashheader *hash_header, uint64_t keylen, uint
   hash_header->num_entries--;
 }
 
-static sparkey_returncode hash_delete(uint64_t wanted_slot, uint64_t hash, uint8_t *hashtable, sparkey_hashheader *hash_header, sparkey_logiter *iter, sparkey_logiter *ra_iter, sparkey_logreader *log) {
+// Positions iter at the entry that a hash table address points to.
+static sparkey_returncode seek_entry(sparkey_logiter *iter, sparkey_logreader *log, sparkey_hashheader *hash_header, uint64_t address) {
+  RETHROW(sparkey_logiter_seek(iter, log, address >> hash_header->entry_block_bits));
+  RETHROW(sparkey_logiter_skip(iter, log, (int) address & hash_header->entry_block_bitmask));
+  return sparkey_logiter_next(iter, log);
+}
+
+// key_iter is positioned at the entry being added, at the given address,
+// only when its key needs to be compared, since that is rare.
+static sparkey_returncode hash_delete(uint64_t wanted_slot, uint64_t hash, uint8_t *hashtable, sparkey_hashheader *hash_header, uint64_t keylen, uint64_t address, sparkey_logiter *key_iter, sparkey_logiter *ra_iter, sparkey_logreader *log) {
   int slot_size = hash_header->address_size + hash_header->hash_size;
   uint64_t pos = wanted_slot * slot_size;
 
@@ -93,55 +102,52 @@ static sparkey_returncode hash_delete(uint64_t wanted_slot, uint64_t hash, uint8
   uint64_t slot = wanted_slot;
 
   while (1) {
-    uint64_t hash2 = hash_header->hash_algorithm.read_hash(hashtable, pos);
+    uint64_t hash2 = read_addr(hashtable, pos, hash_header->hash_size);
     uint64_t position2 = read_addr(hashtable, pos + hash_header->hash_size, hash_header->address_size);
     if (position2 == 0) {
         return SPARKEY_SUCCESS;
     }
-    int entry_index2 = (int) (position2) & hash_header->entry_block_bitmask;
-    position2 >>= hash_header->entry_block_bits;
-    if (position2 < log->header.header_size || position2 >= log->header.data_end ) {
-      fprintf(stderr, "hash_delete():%d bug: found pointer outside of range %"PRIu64"\n", __LINE__, position2);
+    uint64_t block_position2 = position2 >> hash_header->entry_block_bits;
+    if (block_position2 < log->header.header_size || block_position2 >= log->header.data_end ) {
+      fprintf(stderr, "hash_delete():%d bug: found pointer outside of range %"PRIu64"\n", __LINE__, block_position2);
       return SPARKEY_INTERNAL_ERROR;
     }
     if (hash == hash2) {
-      RETHROW(sparkey_logiter_seek(ra_iter, log, position2));
-      RETHROW(sparkey_logiter_skip(ra_iter, log, entry_index2));
-      RETHROW(sparkey_logiter_next(ra_iter, log));
+      RETHROW(seek_entry(ra_iter, log, hash_header, position2));
       uint64_t keylen2 = ra_iter->keylen;
       uint64_t valuelen2 = ra_iter->valuelen;
       if (ra_iter->type != SPARKEY_ENTRY_PUT) {
         fprintf(stderr, "hash_delete():%d bug: expected a put entry but found %d\n", __LINE__, ra_iter->type);
         return SPARKEY_INTERNAL_ERROR;
       }
-      if (iter->keylen == keylen2) {
-        RETHROW(sparkey_logiter_reset(iter, log));
+      if (keylen == keylen2) {
+        RETHROW(seek_entry(key_iter, log, hash_header, address));
         int cmp;
-        RETHROW(sparkey_logiter_keycmp(iter, ra_iter, log, &cmp));
+        RETHROW(sparkey_logiter_keycmp(key_iter, ra_iter, log, &cmp));
         if (cmp == 0) {
           // TODO: possibly optimize this to read and write stuff to move in chunks instead of one by one, to decrease number of seeks.
           while (1) {
             uint64_t next_slot = (slot + 1) % hash_header->hash_capacity;
             uint64_t next_pos = next_slot * slot_size;
 
-            uint64_t hash3 = hash_header->hash_algorithm.read_hash(hashtable, next_pos);
+            uint64_t hash3 = read_addr(hashtable, next_pos, hash_header->hash_size);
             uint64_t position3 = read_addr(hashtable, next_pos + hash_header->hash_size, hash_header->address_size);
             if (position3 == 0) {
                 break;
             }
-            if ((hash3 % hash_header->hash_capacity) == next_slot) {
+            if (capacity_mod(hash_header, hash3) == next_slot) {
                 break;
             }
 
             uint64_t pos3 = slot * slot_size;
-            hash_header->hash_algorithm.write_hash(&hashtable[pos3], hash3);
+            write_addr(&hashtable[pos3], hash3, hash_header->hash_size);
             write_addr(&hashtable[pos3 + hash_header->hash_size], position3, hash_header->address_size);
 
             slot = next_slot;
           }
 
           uint64_t pos3 = slot * slot_size;
-          hash_header->hash_algorithm.write_hash(&hashtable[pos3], 0);
+          write_addr(&hashtable[pos3], 0, hash_header->hash_size);
           write_addr(&hashtable[pos3 + hash_header->hash_size], 0, hash_header->address_size);
           deleted_entry(hash_header, keylen2, valuelen2);
 
@@ -150,7 +156,7 @@ static sparkey_returncode hash_delete(uint64_t wanted_slot, uint64_t hash, uint8
         }
       }
     }
-    uint64_t other_displacement = get_displacement(hash_header->hash_capacity, slot, hash2);
+    uint64_t other_displacement = displacement_of(hash_header, slot, hash2);
     if (displacement > other_displacement) {
       return SPARKEY_SUCCESS;
     }
@@ -166,43 +172,40 @@ static sparkey_returncode hash_delete(uint64_t wanted_slot, uint64_t hash, uint8
   return SPARKEY_INTERNAL_ERROR;
 }
 
-static sparkey_returncode hash_put(uint64_t wanted_slot, uint64_t hash, uint8_t *hashtable, sparkey_hashheader *hash_header, sparkey_logiter *iter, sparkey_logiter *ra_iter, sparkey_logreader *log, uint64_t position) {
+// Keys are only compared if key_iter is not NULL. It is positioned at the
+// entry being added, at position, as for hash_delete.
+static sparkey_returncode hash_put(uint64_t wanted_slot, uint64_t hash, uint8_t *hashtable, sparkey_hashheader *hash_header, uint64_t keylen, sparkey_logiter *key_iter, sparkey_logiter *ra_iter, sparkey_logreader *log, uint64_t position) {
   int slot_size = hash_header->address_size + hash_header->hash_size;
   uint64_t pos = wanted_slot * slot_size;
 
   uint64_t displacement = 0;
   uint64_t slot = wanted_slot;
 
-  int might_be_collision = iter != NULL && ra_iter != NULL && log != NULL;
+  int might_be_collision = key_iter != NULL;
   while (1) {
-    uint64_t hash2 = hash_header->hash_algorithm.read_hash(hashtable, pos);
+    uint64_t hash2 = read_addr(hashtable, pos, hash_header->hash_size);
     uint64_t position2 = read_addr(hashtable, pos + hash_header->hash_size, hash_header->address_size);
     if (position2 == 0) {
-      hash_header->hash_algorithm.write_hash(&hashtable[pos], hash);
+      write_addr(&hashtable[pos], hash, hash_header->hash_size);
       write_addr(&hashtable[pos + hash_header->hash_size], position, hash_header->address_size);
       added_entry(hash_header);
       return SPARKEY_SUCCESS;
     }
 
-    int entry_index2 = (int) (position2) & hash_header->entry_block_bitmask;
-    uint64_t position3 = position2 >> hash_header->entry_block_bits;
-
     if (might_be_collision && hash == hash2) {
-      RETHROW(sparkey_logiter_seek(ra_iter, log, position3));
-      RETHROW(sparkey_logiter_skip(ra_iter, log, entry_index2));
-      RETHROW(sparkey_logiter_next(ra_iter, log));
+      RETHROW(seek_entry(ra_iter, log, hash_header, position2));
       uint64_t keylen2 = ra_iter->keylen;
       uint64_t valuelen2 = ra_iter->valuelen;
       if (ra_iter->type != SPARKEY_ENTRY_PUT) {
         fprintf(stderr, "hash_put():%d bug: expected a put entry but found %d\n", __LINE__, ra_iter->type);
         return SPARKEY_INTERNAL_ERROR;
       }
-      if (iter->keylen == keylen2) {
-        RETHROW(sparkey_logiter_reset(iter, log));
+      if (keylen == keylen2) {
+        RETHROW(seek_entry(key_iter, log, hash_header, position));
         int cmp;
-        RETHROW(sparkey_logiter_keycmp(iter, ra_iter, log, &cmp));
+        RETHROW(sparkey_logiter_keycmp(key_iter, ra_iter, log, &cmp));
         if (cmp == 0) {
-          hash_header->hash_algorithm.write_hash(&hashtable[pos], hash);
+          write_addr(&hashtable[pos], hash, hash_header->hash_size);
           write_addr(&hashtable[pos + hash_header->hash_size], position, hash_header->address_size);
           replaced_entry(hash_header, keylen2, valuelen2);
           return SPARKEY_SUCCESS;
@@ -210,10 +213,10 @@ static sparkey_returncode hash_put(uint64_t wanted_slot, uint64_t hash, uint8_t 
       }
     }
 
-    uint64_t other_displacement = get_displacement(hash_header->hash_capacity, slot, hash2);
+    uint64_t other_displacement = displacement_of(hash_header, slot, hash2);
     if (displacement > other_displacement) {
       // Steal the slot, and move the other one
-      hash_header->hash_algorithm.write_hash(&hashtable[pos], hash);
+      write_addr(&hashtable[pos], hash, hash_header->hash_size);
       write_addr(&hashtable[pos + hash_header->hash_size], position, hash_header->address_size);
       position = position2;
       displacement = other_displacement;
@@ -250,7 +253,7 @@ static void calculate_max_displacement(sparkey_hashheader *hash_header, uint8_t 
   int has_prev = 0;
   uint64_t prev_hash = -1;
   for (uint64_t slot = 0; slot < capacity; slot++) {
-    uint64_t hash = hash_header->hash_algorithm.read_hash(hashtable, slot * slot_size);
+    uint64_t hash = read_addr(hashtable, slot * slot_size, hash_header->hash_size);
     if (has_prev && prev_hash == hash) {
       num_hash_collisions++;
     }
@@ -258,7 +261,7 @@ static void calculate_max_displacement(sparkey_hashheader *hash_header, uint8_t 
     if (position != 0) {
       prev_hash = hash;
       has_prev = 1;
-      uint64_t displacement = get_displacement(capacity, slot, hash);
+      uint64_t displacement = displacement_of(hash_header, slot, hash);
       total_displacement += displacement;
       if (displacement > max_displacement) {
         max_displacement = displacement;
@@ -302,21 +305,46 @@ static sparkey_returncode read_fully(int fd, uint8_t *buf, size_t count) {
   return SPARKEY_SUCCESS;
 }
 
+// Adding an entry to a large hash table is a cache miss, and adding them one
+// at a time leaves each waiting on the last. Entries are added this many
+// entries after their slot starts loading, so that the misses overlap.
+#define PREFETCH_DISTANCE (16)
+
 static sparkey_returncode hash_copy(uint8_t *hashtable, uint8_t *buf, size_t buffer_size, sparkey_hashheader *old_header, sparkey_hashheader *new_header) {
   int slot_size = old_header->address_size + old_header->hash_size;
-  for (unsigned int i = 0; i < buffer_size; i += slot_size) {
-    uint64_t hash = old_header->hash_algorithm.read_hash(buf, i);
+  size_t prefetch_offset = PREFETCH_DISTANCE * slot_size;
+  for (size_t i = 0; i < buffer_size; i += slot_size) {
+    if (i + prefetch_offset < buffer_size) {
+      PREFETCH_SLOT(hashtable, new_header, read_addr(buf, i + prefetch_offset, old_header->hash_size));
+    }
+    uint64_t hash = read_addr(buf, i, old_header->hash_size);
     uint64_t position = read_addr(buf, i + old_header->hash_size, old_header->address_size);
 
     int entry_index = (int) (position) & old_header->entry_block_bitmask;
     position >>= old_header->entry_block_bits;
 
-    uint64_t wanted_slot = hash % new_header->hash_capacity;
+    uint64_t wanted_slot = capacity_mod(new_header, hash);
     if (position != 0) {
-      RETHROW(hash_put(wanted_slot, hash, hashtable, new_header, NULL, NULL, NULL, (position << new_header->entry_block_bits) | entry_index));
+      RETHROW(hash_put(wanted_slot, hash, hashtable, new_header, 0, NULL, NULL, NULL, (position << new_header->entry_block_bits) | entry_index));
     }
   }
   return SPARKEY_SUCCESS;
+}
+
+// An entry of the log that is read but not yet added to the hash table.
+typedef struct {
+  uint64_t hash;
+  uint64_t address;
+  uint64_t keylen;
+  sparkey_entry_type type;
+} pending_entry;
+
+static sparkey_returncode add_entry(pending_entry *e, uint8_t *hashtable, sparkey_hashheader *hash_header, sparkey_logiter *key_iter, sparkey_logiter *ra_iter, sparkey_logreader *log) {
+  uint64_t wanted_slot = capacity_mod(hash_header, e->hash);
+  if (e->type == SPARKEY_ENTRY_PUT) {
+    return hash_put(wanted_slot, e->hash, hashtable, hash_header, e->keylen, key_iter, ra_iter, log, e->address);
+  }
+  return hash_delete(wanted_slot, e->hash, hashtable, hash_header, e->keylen, e->address, key_iter, ra_iter, log);
 }
 
 static uint64_t hash_capacity_for(uint64_t num_entries) {
@@ -420,6 +448,7 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   sparkey_logreader *log;
   sparkey_logiter *iter = NULL;
   sparkey_logiter *ra_iter = NULL;
+  sparkey_logiter *key_iter = NULL;
 
   RETHROW(sparkey_logreader_open(&log, log_filename));
   // Use the header the reader mapped the log with. Another process may append
@@ -429,6 +458,7 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
   sparkey_returncode returncode = SPARKEY_SUCCESS;
   TRY(sparkey_logiter_create(&iter, log), close_reader);
   TRY(sparkey_logiter_create(&ra_iter, log), close_iter);
+  TRY(sparkey_logiter_create(&key_iter, log), close_iter);
 
   sparkey_hashheader hash_header;
   sparkey_hashheader old_header;
@@ -484,16 +514,21 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
     hash_header.address_size = 8;
   }
   hash_header.hash_algorithm = sparkey_get_hash_algorithm(hash_header.hash_size);
+  set_capacity_fastmod(&hash_header);
 
   int slot_size = hash_header.hash_size + hash_header.address_size;
   uint64_t hashsize = slot_size * hash_header.hash_capacity;
-  uint8_t *hashtable = malloc(hashsize);
-  if (hashtable == NULL) {
-    fprintf(stderr, "sparkey_hash_write():%d bug: could not malloc %"PRIu64" bytes\n", __LINE__, hashsize);
+  // An anonymous mapping is zero-filled lazily, so no memset is needed, and
+  // huge pages make the random accesses into a large table cheaper.
+  uint8_t *hashtable = mmap(NULL, hashsize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (hashtable == MAP_FAILED) {
+    fprintf(stderr, "sparkey_hash_write():%d bug: could not mmap %"PRIu64" bytes\n", __LINE__, hashsize);
     returncode = SPARKEY_INTERNAL_ERROR;
     goto close_iter;
   }
-  memset(hashtable, 0, hashsize);
+#ifdef MADV_HUGEPAGE
+  madvise(hashtable, hashsize, MADV_HUGEPAGE);
+#endif
 
   hash_header.max_displacement = 0;
   hash_header.total_displacement = 0;
@@ -509,11 +544,13 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
     TRY(sparkey_logiter_seek(iter, log, start), free_hashtable);
   }
 
+  pending_entry pending[PREFETCH_DISTANCE];
+  uint64_t num_read = 0;
   while (1) {
     TRY(sparkey_logiter_next(iter, log), free_hashtable);
     switch (iter->state) {
     case SPARKEY_ITER_CLOSED:
-      goto normal_exit;
+      goto add_pending;
       break;
     case SPARKEY_ITER_ACTIVE:
       break;
@@ -524,24 +561,27 @@ sparkey_returncode sparkey_hash_write(const char *hash_filename, const char *log
       break;
     }
 
-    uint64_t iter_block_start = iter->block_position;
-    uint64_t iter_entry_count = iter->entry_count;
+    // Entries are added in the order they were read, PREFETCH_DISTANCE
+    // entries later.
+    pending_entry *e = &pending[num_read % PREFETCH_DISTANCE];
+    if (num_read >= PREFETCH_DISTANCE) {
+      TRY(add_entry(e, hashtable, &hash_header, key_iter, ra_iter, log), free_hashtable);
+    }
+    num_read++;
 
-    uint64_t key_hash;
-    TRY(sparkey_iter_hash(&hash_header, iter, log, &key_hash), free_hashtable);
-    uint64_t wanted_slot = key_hash % hash_header.hash_capacity;
-
-    switch (iter->type) {
-    case SPARKEY_ENTRY_PUT:
-      TRY(hash_put(wanted_slot, key_hash, hashtable, &hash_header, iter, ra_iter, log, (iter_block_start << hash_header.entry_block_bits) | iter_entry_count), free_hashtable);
-      break;
-    case SPARKEY_ENTRY_DELETE:
-      hash_header.garbage_size += 1 + unsigned_vlq_size(iter->keylen) + iter->keylen;
-      TRY(hash_delete(wanted_slot, key_hash, hashtable, &hash_header, iter, ra_iter, log), free_hashtable);
-      break;
+    e->address = (iter->block_position << hash_header.entry_block_bits) | iter->entry_count;
+    e->keylen = iter->keylen;
+    e->type = iter->type;
+    TRY(sparkey_iter_hash(&hash_header, iter, log, &e->hash), free_hashtable);
+    PREFETCH_SLOT(hashtable, &hash_header, e->hash);
+    if (e->type == SPARKEY_ENTRY_DELETE) {
+      hash_header.garbage_size += 1 + unsigned_vlq_size(e->keylen) + e->keylen;
     }
   }
-normal_exit:
+add_pending:
+  for (uint64_t i = num_read > PREFETCH_DISTANCE ? num_read - PREFETCH_DISTANCE : 0; i < num_read; i++) {
+    TRY(add_entry(&pending[i % PREFETCH_DISTANCE], hashtable, &hash_header, key_iter, ra_iter, log), free_hashtable);
+  }
 
   calculate_max_displacement(&hash_header, hashtable);
 
@@ -591,11 +631,12 @@ remove_temp:
   free(tmp_filename);
 
 free_hashtable:
-  free(hashtable);
+  munmap(hashtable, hashsize);
 
 close_iter:
   sparkey_logiter_close(&iter);
   sparkey_logiter_close(&ra_iter);
+  sparkey_logiter_close(&key_iter);
 
 close_reader:
   sparkey_logreader_close(&log);

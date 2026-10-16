@@ -46,6 +46,17 @@ struct sparkey_logiter {
   // compression buffer
   int compression_buf_allocated;
   uint8_t *compression_buf;
+  // Created by the decompressor on first use, if it needs one.
+  sparkey_compression_type compression_type;
+  void *decompress_context;
+
+  // Snappy blocks are decompressed lazily: only the first block_decoded
+  // bytes of compression_buf are valid, and snappy_next is the next
+  // compressed byte to decode. block_decoded is UINT64_MAX for blocks that
+  // are available in full.
+  uint64_t block_decoded;
+  const uint8_t *snappy_next;
+  const uint8_t *snappy_end;
 
   // current entry
   uint64_t entry_block_position;
@@ -56,6 +67,20 @@ struct sparkey_logiter {
   uint64_t valuelen;
   uint64_t key_remaining;
   uint64_t value_remaining;
+
+  // sparkey_logiter_hashnext looks up the puts of many entries at once.
+  // For hashnext_capacity entries, one allocation at hashnext_hashes holds
+  // their key hashes, their addresses and whether each is live, in a hash
+  // file that indexes the log up to hashnext_data_end. Only the first
+  // hashnext_count are set, and the entries before hashnext_cursor are
+  // already passed.
+  uint64_t *hashnext_hashes;
+  uint64_t *hashnext_addresses;
+  uint8_t *hashnext_states;
+  uint64_t hashnext_capacity;
+  uint64_t hashnext_data_end;
+  uint64_t hashnext_count;
+  uint64_t hashnext_cursor;
 };
 
 struct sparkey_logwriter {
@@ -87,13 +112,34 @@ struct sparkey_hashreader {
 sparkey_returncode sparkey_logreader_open_noalloc(sparkey_logreader *log, const char *filename);
 void sparkey_logreader_close_nodealloc(sparkey_logreader *log);
 
+// decompress may store a context in *context, initially NULL, to reuse for
+// later blocks. It is freed with free_context.
 struct sparkey_compressor {
   uint32_t (*max_compressed_size)(uint32_t block_size);
-  sparkey_returncode (*decompress)(uint8_t *input, uint32_t compressed_size, uint8_t *output, uint32_t *uncompressed_size);
+  sparkey_returncode (*decompress)(void **context, uint8_t *input, uint32_t compressed_size, uint8_t *output, uint32_t *uncompressed_size);
   sparkey_returncode (*compress)(uint8_t *input, uint32_t uncompressed_size, uint8_t *output, uint32_t *compressed_size);
+  void (*free_context)(void *context);
 };
 
 extern struct sparkey_compressor sparkey_compressors[3];
 int sparkey_uses_compressor(sparkey_compression_type t);
+
+// Bytes that sparkey_snappy_decompress_upto may write past the end of the
+// decompressed data. Output buffers must be this much larger than the block.
+#define SPARKEY_SNAPPY_SLACK (32)
+
+/**
+ * Reads the uncompressed length at the start of a snappy block and advances
+ * *src past it.
+ */
+sparkey_returncode sparkey_snappy_read_length(const uint8_t **src, const uint8_t *src_end, uint32_t *len);
+
+/**
+ * Continues decompressing a snappy block until at least want bytes of out
+ * (or all out_len bytes, if fewer) are decompressed.
+ * @param src the next compressed byte to decode, advanced past the bytes used.
+ * @param out_pos the number of bytes of out already decompressed, updated.
+ */
+sparkey_returncode sparkey_snappy_decompress_upto(const uint8_t **src, const uint8_t *src_end, uint8_t *out, uint64_t out_len, uint64_t *out_pos, uint64_t want);
 
 #endif
